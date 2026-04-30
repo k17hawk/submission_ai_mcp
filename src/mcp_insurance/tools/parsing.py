@@ -3,11 +3,14 @@
 MCP tools for parsing ACORD submission PDFs and extracting policy data.
 """
 
+import logging
 from typing import Dict, Any, Optional
 from pathlib import Path
 
-from core.pdf_extractor import extract_text_from_pdf, parse_policy_data
+from src.mcp_insurance.core.pdf_extractor import extract_text_from_pdf, parse_policy_data
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 async def parse_acord_submission(pdf_path: str) -> Dict[str, Any]:
     """
@@ -23,13 +26,14 @@ async def parse_acord_submission(pdf_path: str) -> Dict[str, Any]:
             - error: optional error message
     """
     try:
+        logger.info(f"Parsing ACORD submission from: {pdf_path}")
         path = Path(pdf_path)
         if not path.exists():
             return {"error": f"File not found: {pdf_path}"}
 
         text = extract_text_from_pdf(pdf_path)
         policy_data = parse_policy_data(text)
-
+        logger.info(f"Successfully parsed ACORD submission: {pdf_path}")
         return {
             "text": text,
             "policy_data": policy_data,
@@ -50,6 +54,7 @@ async def extract_policy_data(pdf_path: str) -> Dict[str, Optional[str]]:
         Dictionary of policy fields: policy_number, insured_name, etc.
     """
     try:
+        logger.info(f"Extracting policy data from: {pdf_path}") 
         text = extract_text_from_pdf(pdf_path)
         return parse_policy_data(text)
     except Exception as e:

@@ -5,19 +5,20 @@ MCP tools for retrieving insurance clauses from the corpus.
 
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-
-from core.corpus_loader import CorpusLoader
-from core.retriever import Retriever
-
+import logging
+from src.mcp_insurance.core.corpus_loader import CorpusLoader
+from src.mcp_insurance.core.retriever import Retriever
+from src.mcp_insurance.data.dataset_paths import DatasetPaths
 _corpus_loader: Optional[CorpusLoader] = None
 _retriever: Optional[Retriever] = None
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def _ensure_initialized():
     """Lazy-load the corpus and build BM25 index."""
     global _corpus_loader, _retriever
     if _corpus_loader is None:
-        from dataset_paths import DatasetPaths
         paths = DatasetPaths()
         _corpus_loader = CorpusLoader(paths.corpus_jsonl).load().build_bm25_index()
         _retriever = Retriever(_corpus_loader)
@@ -35,6 +36,7 @@ async def search_corpus(query: str, top_k: int = 10, method: str = "bm25") -> Li
     Returns:
         List of dicts, each with "doc_id", "score", and "text".
     """
+    logger.info(f"Searching corpus with query: {query}")
     _ensure_initialized()
     if method == "bm25":
         results = _retriever.search_bm25(query, top_k)
@@ -48,6 +50,7 @@ async def search_corpus(query: str, top_k: int = 10, method: str = "bm25") -> Li
     output = []
     for doc_id, score in results:
         text = _corpus_loader.get_document(doc_id)
+        logger.info(f"Retrieved document: {doc_id}")    
         output.append({
             "doc_id": doc_id,
             "score": float(score),
@@ -67,6 +70,7 @@ async def get_document_by_id(doc_id: str, include_full_text: bool = True) -> Dic
     Returns:
         Dictionary with doc_id and text (if requested), or error.
     """
+    logger.info(f"Retrieving document by ID: {doc_id}")
     _ensure_initialized()
     text = _corpus_loader.get_document(doc_id)
     if text is None:
@@ -76,4 +80,5 @@ async def get_document_by_id(doc_id: str, include_full_text: bool = True) -> Dic
         result["text"] = text
     else:
         result["text_preview"] = text[:500] + "..." if len(text) > 500 else text
+    logger.info(f"Document retrieved: {doc_id}")
     return result

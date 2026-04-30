@@ -5,24 +5,24 @@ MCP tools for evaluating retrieval performance using qrels.
 
 from typing import Dict, List, Any, Optional
 from pathlib import Path
-
+import logging
 import numpy as np
 from sklearn.metrics import ndcg_score
 
-from core.qrels_loader import QrelsLoader
-from core.retriever import Retriever
-from core.corpus_loader import CorpusLoader
-
-# Global instances (lazy-loaded)
+from src.mcp_insurance.core.qrels_loader import QrelsLoader
+from src.mcp_insurance.core.retriever import Retriever
+from src.mcp_insurance.core.corpus_loader import CorpusLoader
+from src.mcp_insurance.data.dataset_paths import DatasetPaths
 _qrels_loader: Optional[QrelsLoader] = None
 _corpus_loader: Optional[CorpusLoader] = None
 _retriever: Optional[Retriever] = None
-
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def _ensure_initialized():
     global _qrels_loader, _corpus_loader, _retriever
     if _qrels_loader is None:
-        from dataset_paths import DatasetPaths
+        logger.info("Initializing evaluation tools...")
         paths = DatasetPaths()
         _qrels_loader = QrelsLoader(paths.qrels_dir)
         _corpus_loader = CorpusLoader(paths.corpus_jsonl).load().build_bm25_index()
@@ -45,6 +45,7 @@ async def evaluate_retrieval(
     Returns:
         Dictionary with metrics: mAP, NDCG@k, recall@k, precision@k.
     """
+    logger.info("Evaluating retrieval performance...")
     _ensure_initialized()
     qrels = _qrels_loader.load_qrels(split)
     queries = _load_queries()  # need to load queries.jsonl for texts
@@ -78,6 +79,7 @@ async def evaluate_retrieval(
 
         # Compute per-query metrics
         # Precision@k
+        logger.info(f"Evaluating query: {query_id} with {len(y_true)} retrieved docs")
         prec = sum(1 for rel in y_true if rel > 0) / len(y_true)
         # Recall@k (relative to total relevant docs for this query)
         total_rel = sum(1 for rel in rel_dict.values() if rel > 0)
@@ -88,12 +90,12 @@ async def evaluate_retrieval(
         ndcg = ndcg_score(y_true_graded, y_pred_scores, k=top_k)
 
         all_scores.append({"precision": prec, "recall": recall, "ndcg": ndcg})
-
+    logger.info(f"Evaluated {len(all_scores)} queries for split '{split}' using method '{method}'")
     # Aggregate
     avg_precision = np.mean([s["precision"] for s in all_scores])
     avg_recall = np.mean([s["recall"] for s in all_scores])
     avg_ndcg = np.mean([s["ndcg"] for s in all_scores])
-
+    logger.info(f"Results - Precision@{top_k}: {avg_precision:.4f}, Recall@{top_k}: {avg_recall:.4f}, NDCG@{top_k}: {avg_ndcg:.4f}")    
     return {
         "split": split,
         "method": method,
@@ -108,7 +110,7 @@ async def evaluate_retrieval(
 def _load_queries() -> Dict[str, str]:
     """Helper: load queries.jsonl into {query_id: text}."""
     import json
-    from dataset_paths import DatasetPaths
+    
     paths = DatasetPaths()
     queries = {}
     with open(paths.queries_jsonl, 'r', encoding='utf-8') as f:
