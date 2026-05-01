@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Optional
 from src.mcp_insurance.tools.parsing import parse_acord_submission
 from src.mcp_insurance.tools.retrieval import search_corpus, get_document_by_id
 from src.mcp_insurance.tools.rating import rate_clause, get_available_categories
+from src.mcp_insurance.tools.risk import assess_submission_risk
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -146,6 +147,12 @@ async def process_submission(
         logger.info("Deduplicated clauses across queries")
 
     logger.info(f"✅ Submission pipeline completed — {len(report['results'])} query groups")
+
+    policy_type = report.get("policy_data", {}).get("policy_type")
+    risk_assessment = await assess_submission_risk(report, policy_type=policy_type)
+    report["risk_assessment"] = risk_assessment
+    
+    logger.info(f"✅ Risk assessment completed — Overall: {risk_assessment.get('overall_risk')}")
     return report
 
 

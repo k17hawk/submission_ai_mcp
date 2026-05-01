@@ -21,7 +21,7 @@ from src.mcp_insurance.tools.pipeline import process_submission
 
 # Helper for resource
 from src.mcp_insurance.tools.rating import get_available_categories
-
+from src.mcp_insurance.tools.risk import assess_submission_risk
 # Create MCP server
 mcp = FastMCP("Insurance Submission Parser")
 
@@ -33,7 +33,8 @@ mcp.add_tool(get_document_by_id)
 mcp.add_tool(evaluate_retrieval)
 mcp.add_tool(rate_clause)
 mcp.add_tool(get_rating_examples)
-mcp.add_tool(process_submission)      # <-- only one process_submission registration
+mcp.add_tool(process_submission)  
+mcp.add_tool(assess_submission_risk)
 
 # ----------- resource: rating categories -----------
 @mcp.resource("rating://categories")
