@@ -1,14 +1,10 @@
-"""
-MCP tool that orchestrates the full ACORD submission parsing pipeline:
-parse PDF → search clause library → rate retrieved clauses → compile report.
-"""
-
+# tools/pipeline.py
 import logging
 from typing import Dict, Any, List, Optional
 
 from src.mcp_insurance.tools.parsing import parse_acord_submission
-from src.mcp_insurance.tools.retrieval import search_corpus, get_document_by_id, _ensure_initialized as ensure_retrieval
-from src.mcp_insurance.tools.rating import rate_clause, _ensure_ratings_model, get_available_categories
+from src.mcp_insurance.tools.retrieval import search_corpus, get_document_by_id
+from src.mcp_insurance.tools.rating import rate_clause, get_available_categories
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,29 +12,27 @@ logger = logging.getLogger(__name__)
 
 async def process_submission(
     pdf_path: str,
-    queries: List[str],
+    queries: Optional[List[str]] = None,
     top_k: int = 5,
     retrieval_method: str = "bm25",
     map_query_to_rating_category: bool = True,
+    deduplicate_across_queries: bool = False,
 ) -> Dict[str, Any]:
     """
-    MCP Tool: Full pipeline – parse ACORD PDF, retrieve relevant clauses,
-    rate them, and generate a submission report.
+    Parse ACORD PDF, detect clause topics, retrieve similar clauses, and rate them.
 
     Args:
-        pdf_path: Path to the ACORD form PDF.
-        queries: List of clause-type queries to search for
-                 (e.g., ["Cap on Liability", "Governing Law"]).
-        top_k: Number of clauses to retrieve per query.
+        pdf_path: Path to the ACORD PDF file.
+        queries: Optional list of clause categories to search for.
+                 If None, auto-detects from PDF content.
+        top_k: Number of top documents to retrieve per query.
         retrieval_method: "bm25", "embedding", or "hybrid".
-        map_query_to_rating_category: If True, try to match each query
-            to a rating category from the ACORD Excel for better predictions.
+        map_query_to_rating_category: Map detected queries to known rating categories.
+        deduplicate_across_queries: If True, each doc_id appears only under its
+                                    highest-scoring query.
 
     Returns:
-        Dictionary with:
-            - policy_data: parsed policy fields
-            - results: list of query results, each with retrieved clauses and ratings
-            - error: optional error message if PDF parsing failed
+        Dictionary with policy_data, results list, and optional error.
     """
     logger.info(f"🚀 Starting submission pipeline for PDF: {pdf_path}")
     report = {
@@ -53,91 +47,158 @@ async def process_submission(
         report["error"] = f"PDF parsing failed: {parse_result['error']}"
         return report
     report["policy_data"] = parse_result["policy_data"]
+    full_text = parse_result.get("text", "")
 
-    # ---- Prepare rating category lookup if enabled ----
+    if not full_text.strip():
+        report["error"] = "PDF extracted text is empty"
+        return report
+
+    # ---- Step 2: Detect relevant clause categories from the PDF text ----
+    if queries is None:
+        queries = _detect_categories_from_text(full_text)
+        logger.info(f"Auto-detected {len(queries)} queries from PDF: {queries}")
+
+    if not queries:
+        report["error"] = "No clause categories detected in PDF text"
+        return report
+
+    # ---- Prepare rating category lookup ----
     category_map = {}
     if map_query_to_rating_category:
         try:
             available_categories = get_available_categories()
-            # Build a lowercase -> exact mapping
             cat_lower = {c.lower(): c for c in available_categories}
             for q in queries:
                 lower_q = q.lower().strip()
                 if lower_q in cat_lower:
                     category_map[q] = cat_lower[lower_q]
-                    logger.info(f"  Mapped query '{q}' → rating category '{cat_lower[lower_q]}'")
                 else:
-                    logger.info(f"  No rating category match for query '{q}', using global model")
+                    # Try partial match
+                    for cat_key, cat_val in cat_lower.items():
+                        if lower_q in cat_key or cat_key in lower_q:
+                            category_map[q] = cat_val
+                            break
+            logger.info(f"Category mapping: {category_map}")
         except Exception as e:
             logger.warning(f"Could not load rating categories: {e}")
 
-    # ---- Step 2 & 3: Retrieve and rate for each query ----
+    # ---- Step 3: Retrieve and rate for each query ----
     for query in queries:
         logger.info(f"  Processing query: '{query}'")
         try:
-            # Search the corpus
             retrieved = await search_corpus(query, top_k=top_k, method=retrieval_method)
         except Exception as e:
             logger.error(f"  Search failed for '{query}': {e}")
             report["results"].append({
                 "query": query,
                 "error": f"Search failed: {e}",
-                "clauses": [],
+                "rated_clauses": []
             })
             continue
 
-        # For each retrieved document, get the full text and rate it
         rated_clauses = []
         for item in retrieved:
             doc_id = item["doc_id"]
             try:
-                # Get full clause text (search_corpus returns truncated)
                 doc = await get_document_by_id(doc_id, include_full_text=True)
                 if doc.get("error"):
-                    logger.warning(f"    Could not fetch full text for {doc_id}: {doc['error']}")
                     continue
-                full_text = doc["text"]
+                full_clause_text = doc["text"]
             except Exception as e:
-                logger.warning(f"    Error fetching {doc_id}: {e}")
+                logger.warning(f"  Could not get document {doc_id}: {e}")
                 continue
 
-            # Rate the clause
-            category_hint = category_map.get(query)  # exact category name if matched, else None
-            try:
-                rating_result = await rate_clause(full_text, category=category_hint)
-            except Exception as e:
-                logger.warning(f"    Rating failed for {doc_id}: {e}")
-                continue
+            category_hint = category_map.get(query)
+            rating_result = await rate_clause(full_clause_text, category=category_hint)
 
             rated_clauses.append({
                 "doc_id": doc_id,
-                "score": item["score"],
-                "clause_text": full_text,
+                "score": round(item["score"], 2),
+                "clause_text": full_clause_text,
                 "predicted_rating": rating_result.get("predicted_rating"),
-                "stars": _make_stars(rating_result.get("predicted_rating", 0.0)),
+                "stars": rating_result.get("stars", "☆☆☆☆☆"),
+                "category_used": rating_result.get("category_used"),
             })
+
+        # Sort within each query by rating descending
+        rated_clauses.sort(
+            key=lambda x: (
+                x.get("predicted_rating") is None,
+                -(x.get("predicted_rating") or 0)
+            )
+        )
 
         report["results"].append({
             "query": query,
-            "rated_clauses": ranked_by_rating(rated_clauses),  # optional sort
+            "rated_clauses": rated_clauses,
         })
 
-    logger.info("✅ Submission pipeline completed")
+    # ---- Optional: Deduplicate across queries ----
+    if deduplicate_across_queries:
+        seen_doc_ids = set()
+        for result_group in report["results"]:
+            unique_clauses = []
+            for clause in result_group["rated_clauses"]:
+                if clause["doc_id"] not in seen_doc_ids:
+                    seen_doc_ids.add(clause["doc_id"])
+                    unique_clauses.append(clause)
+            result_group["rated_clauses"] = unique_clauses
+        logger.info("Deduplicated clauses across queries")
+
+    logger.info(f"✅ Submission pipeline completed — {len(report['results'])} query groups")
     return report
 
 
-def _make_stars(rating: float) -> str:
-    """Convert numeric rating to a 5-star string (nearest 0.5)."""
-    if rating is None:
-        return "☆☆☆☆☆"
-    star_count = round(rating * 2) / 2
-    stars = ''.join(
-        '★' if i < int(star_count) else '½' if i < star_count and star_count % 1 else '☆'
-        for i in range(5)
-    )
-    return stars
+def _detect_categories_from_text(full_text: str) -> List[str]:
+    """Detect which clause categories are present in the PDF text."""
+    text_lower = full_text.lower()
+    detected = []
 
+    # Category detection rules based on keywords in the text
+    detection_rules = {
+        "cap on liability": [
+            "limitation of liability", "liability cap", "limitation on damages",
+            "liability limit", "aggregate liability", "maximum liability",
+            "shall not exceed", "limited to the amount"
+        ],
+        "indemnification carveout to cap on liability": [
+            "indemnif", "hold harmless", "indemnity"
+        ],
+        "IP infringement exception to cap on liability": [
+            "intellectual property", "infringement", "patent", "copyright",
+            "trademark", "trade secret", "unauthorized use of intellectual property",
+            "ip infringement"
+        ],
+        "fraud, negligence or willful misconduct carveout to liability cap": [
+            "fraud", "gross negligence", "willful misconduct", "intentional misconduct",
+            "intentional breach"
+        ],
+        "confidentiality exceptions to liability cap": [
+            "confidentiality", "confidential information"
+        ],
+        "personal or bodily injury exception to liability cap": [
+            "personal injury", "bodily injury", "death", "damage to tangible property"
+        ],
+        "compliance with law carveout to cap on liability": [
+            "mandatory applicable law", "non-compliance with any mandatory",
+            "compliance with law"
+        ],
+    }
 
-def ranked_by_rating(clauses: List[Dict]) -> List[Dict]:
-    """Sort clauses by predicted_rating descending (None at end)."""
-    return sorted(clauses, key=lambda x: (x.get("predicted_rating") is None, x.get("predicted_rating") or 0), reverse=True)
+    for category, keywords in detection_rules.items():
+        for keyword in keywords:
+            if keyword in text_lower:
+                detected.append(category)
+                logger.info(f"  Detected category '{category}' via keyword '{keyword}'")
+                break
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_detected = []
+    for cat in detected:
+        if cat not in seen:
+            seen.add(cat)
+            unique_detected.append(cat)
+
+    logger.info(f"Detected {len(unique_detected)} categories: {unique_detected}")
+    return unique_detected

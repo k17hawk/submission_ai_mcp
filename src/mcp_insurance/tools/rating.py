@@ -28,42 +28,42 @@ def _ensure_ratings_model():
         _ratings_model.build_prediction_model()
 
 
+def _make_stars(rating: float) -> str:
+    """Convert numeric rating to 5-star display string."""
+    star_count = round(rating * 2) / 2
+    return ''.join([
+        '★' if i < int(star_count) 
+        else '½' if i < star_count and star_count % 1 
+        else '☆'
+        for i in range(5)
+    ])
+
+
 async def rate_clause(clause_text: str, category: Optional[str] = None) -> Dict[str, Any]:
-    """
-    MCP Tool: Predict a rating (1-5 stars) for a given insurance clause.
-
-    Args:
-        clause_text: The clause text to rate.
-        category: Optional category (e.g., "cap on liability") to constrain prediction.
-
-    Returns:
-        Dictionary with predicted_rating (float) and confidence (optional).
-    """
+    """Rate a single clause text, optionally scoped to a category."""
     _ensure_ratings_model()
     try:
         logger.info(f"Rating clause for category: {category or 'global'}")
         rating = _ratings_model.predict_rating(clause_text, category=category)
-        logger.info(f"Predicted rating: {rating:.2f} for category: {category or 'global'}")
+        stars = _make_stars(rating)
+        logger.info(f"Predicted rating: {rating:.2f} → {stars} for category: {category or 'global'}")
+
         return {
             "clause_text": clause_text[:200] + "..." if len(clause_text) > 200 else clause_text,
             "predicted_rating": rating,
+            "stars": stars,
             "category_used": category or "global",
             "error": None
         }
     except Exception as e:
         logger.error(f"Error occurred while rating clause: {e}")
-        return {"error": str(e), "predicted_rating": None}
+        return {"error": str(e), "predicted_rating": None, "stars": "☆☆☆☆☆", "category_used": category or "global"}
+
 
 def get_available_categories() -> List[str]:
-    """
-    Return all rating category names from the ACORD Excel model.
-    Useful for mapping query strings to exact category names.
-    """
+    """Return all available rating categories from the Excel file."""
     _ensure_ratings_model()
     return _ratings_model.list_categories()
-
-
-
 
 
 async def get_rating_examples(
@@ -72,40 +72,48 @@ async def get_rating_examples(
     sample: Literal["first", "best", "random"] = "first",
     query_text: Optional[str] = None,
     deduplicate: bool = True,
-    max_text_len: Optional[int] = None, 
+    max_text_len: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     MCP Tool: Retrieve example clauses and their ratings for a given category.
 
     Args:
-        category: Category name (e.g., "cap on liability").
+        category: Category name (e.g., "cap on liability" – case‑insensitive).
         top_k: Number of examples to return.
-        sample: How to choose examples:
-            "first"  – first rows from the spreadsheet (original behaviour).
-            "best"   – clauses with the highest ratings.
-            "random" – a random sample (for diversity).
-        query_text: If provided, return the clauses most similar to this text
-                    (using TF-IDF cosine similarity) instead of the above methods.
-        deduplicate: Remove duplicate clause texts within the category (keeps the highest rating).
-        max_text_len: Max characters before truncation. If None or 0, full text is returned.
+        sample: "first", "best", or "random".
+        query_text: If provided, return clauses most similar to this text.
+        deduplicate: Remove duplicate clause texts (keep highest rating).
+        max_text_len: Max characters before truncation.
 
     Returns:
-        Dictionary with category and list of examples (clause_text, rating, stars, ...).
+        Dictionary with "category" and "examples" list.
     """
     _ensure_ratings_model()
-    df = _ratings_model.get_clauses_by_category(category)
-    if df.empty:
-        return {"error": f"Category '{category}' not found", "examples": []}
 
-    # Optional deduplication (keep best rating for each unique text)
+    # --- Case‑insensitive lookup for the exact category name ---
+    all_categories = _ratings_model.list_categories()
+    exact_category = None
+    for cat in all_categories:
+        if cat.strip().lower() == category.strip().lower():
+            exact_category = cat
+            break
+
+    if exact_category is None:
+        return {"error": f"Category '{category}' not found. Available: {all_categories}", "examples": []}
+
+    df = _ratings_model.get_clauses_by_category(exact_category)
+    if df.empty:
+        return {"error": f"No clauses found for category '{category}'", "examples": []}
+
+    # Optional deduplication
     if deduplicate:
         df = df.sort_values('rating', ascending=False).drop_duplicates(
             subset='clause_text', keep='first'
         )
 
-    # Select rows based on mode
+    # Select rows
     if query_text:
-        logger.info(f"Finding {top_k} examples most similar to query for category: {category}")
+        logger.info(f"Finding {top_k} examples similar to query for category '{exact_category}'")
         try:
             vec = TfidfVectorizer(stop_words='english', max_features=1000)
             tfidf_matrix = vec.fit_transform(df['clause_text'])
@@ -123,22 +131,17 @@ async def get_rating_examples(
     else:  # "first"
         selected = df.head(top_k)
 
-    # Build output list
     examples = []
     for _, row in selected.iterrows():
         full_text = row['clause_text']
         rating = row['rating']
 
-        # Truncate only if max_text_len is a positive number
         if max_text_len and max_text_len > 0 and len(full_text) > max_text_len:
             display_text = full_text[:max_text_len] + "…"
         else:
             display_text = full_text
 
-        # Round to nearest 0.5 star for display
-        star_count = round(rating * 2) / 2
-        stars = ''.join(['★' if i < int(star_count) else '½' if i < star_count and star_count % 1 else '☆'
-                         for i in range(5)])
+        stars = _make_stars(rating)
 
         examples.append({
             "clause_text": display_text,
@@ -146,5 +149,8 @@ async def get_rating_examples(
             "stars": stars,
         })
 
-    logger.info(f"Returning {len(examples)} examples for category: {category}")
-    return {"category": category, "examples": examples}
+    logger.info(f"Returning {len(examples)} examples for category: {exact_category}")
+    return {
+        "category": exact_category,
+        "examples": examples,
+    }

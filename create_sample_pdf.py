@@ -1,0 +1,13 @@
+from fpdf import FPDF
+pdf = FPDF()
+pdf.add_page()
+pdf.set_font("Arial", size=12)
+pdf.cell(200, 10, txt="ACORD CERTIFICATE OF LIABILITY INSURANCE", ln=True, align='C')
+pdf.ln(10)
+pdf.cell(200, 10, txt="Policy Number: ABC-12345", ln=True)
+pdf.cell(200, 10, txt="Named Insured: Example Corp", ln=True)
+pdf.cell(200, 10, txt="Effective Date: 01/01/2025", ln=True)
+pdf.cell(200, 10, txt="Expiration Date: 01/01/2026", ln=True)
+pdf.cell(200, 10, txt="Additional Insured: Yes", ln=True)
+pdf.cell(200, 10, txt="Policy Type: Commercial General Liability", ln=True)
+pdf.output("test_acord.pdf")
