@@ -1,42 +1,26 @@
+# underwriting_graph.py
 """
-Multi-Agent Underwriting Assistant
-Orchestrates Submission Parser (MCP Server 1) + Risk Checker (MCP Server 2)
-using LangGraph.
+Multi-Agent Underwriting Assistant using LangGraph + MCP Servers
 """
 
 import asyncio
 import logging
 from typing import TypedDict, List, Dict, Any, Optional
-from pathlib import Path
+from datetime import datetime
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-
-# ─── MCP Client imports ───
-# Your two servers are at:
-#   Server 1 (Parser): http://127.0.0.1:8000
-#   Server 2 (Risk):   http://127.0.0.1:8001
-# In production, you'd use MCP client libraries. For now, we call the tools directly.
-
-import sys
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
-from src.mcp_insurance.tools.parsing import parse_acord_submission, extract_policy_data
-from src.mcp_insurance.tools.retrieval import search_corpus, get_document_by_id
-from src.mcp_insurance.tools.rating import rate_clause, get_rating_examples, get_available_categories
-from src.mcp_insurance.tools.risk import assess_submission_risk, _make_stars
+from mcp_client import mcp_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════
-# STATE
-# ═══════════════════════════════════════════════════════════════
-
+#state definition for the underwriting process
 class UnderwritingState(TypedDict):
     # Input
     pdf_path: str
+    submission_id: str
     
     # Agent 1 output
     full_text: str
@@ -47,19 +31,21 @@ class UnderwritingState(TypedDict):
     detected_categories: List[str]
     search_results: Dict[str, List[Dict]]
     
-    # Agent 3 output
-    rated_clauses: List[Dict[str, Any]]
+    # Agent 3 output (Using Risk Server instead of Insurance Server)
     risk_assessment: Dict[str, Any]
+    clause_analyses: List[Dict[str, Any]]
     
     # Agent 4 output
     recommendations: List[Dict[str, Any]]
     negotiation_points: List[Dict[str, Any]]
     strong_points: List[Dict[str, Any]]
     final_decision: str
+    decision_emoji: str
     
     # Agent 5 output
     executive_summary: str
     full_report: str
+    report_generated_at: str
     
     # Logs
     agent_logs: List[str]
@@ -67,38 +53,40 @@ class UnderwritingState(TypedDict):
 
 
 # ═══════════════════════════════════════════════════════════════
-# AGENT 1: POLICY EXTRACTOR
+# AGENT 1: POLICY EXTRACTOR (Insurance Server)
 # ═══════════════════════════════════════════════════════════════
 
 async def extractor_agent(state: UnderwritingState) -> UnderwritingState:
-    """
-    Reads the PDF and extracts policy fields and full text.
-    Calls: MCP Server 1 → parse_acord_submission()
-    """
-    logger.info("🔍 AGENT 1: EXTRACTOR — Reading PDF...")
-    state["agent_logs"].append("🔍 EXTRACTOR: Starting PDF analysis...")
+    """Parse PDF using Insurance MCP Server"""
+    logger.info("🔍 AGENT 1: EXTRACTOR — Parsing PDF...")
+    state["agent_logs"].append("🔍 EXTRACTOR: Starting PDF analysis via Insurance Server...")
     
     try:
-        result = await parse_acord_submission(state["pdf_path"])
+        result = await mcp_manager.parse_submission(state["pdf_path"])
         
-        if result.get("error"):
+        if isinstance(result, dict) and result.get("error"):
             state["parse_error"] = result["error"]
             state["errors"].append(f"Parse error: {result['error']}")
             state["agent_logs"].append(f"❌ EXTRACTOR: Failed — {result['error']}")
             return state
         
-        state["full_text"] = result.get("text", "")
-        state["policy_data"] = result.get("policy_data", {})
+        # Handle both dict and string responses
+        if isinstance(result, dict):
+            state["full_text"] = result.get("text", "")
+            state["policy_data"] = result.get("policy_data", {})
+        else:
+            state["full_text"] = str(result)
+            state["policy_data"] = {}
         
         policy_type = state["policy_data"].get("policy_type", "Unknown")
-        insured = state["policy_data"].get("insured_name", "Unknown")
-        policy_num = state["policy_data"].get("policy_number", "Unknown")
+        insured = state["policy_data"].get("insured_name", "N/A")
+        policy_num = state["policy_data"].get("policy_number", "N/A")
         
         state["agent_logs"].append(
             f"✅ EXTRACTOR: {policy_type} | {insured} | {policy_num}"
         )
         state["agent_logs"].append(
-            f"   Extracted {len(state['full_text'])} characters of text"
+            f"   Extracted {len(state['full_text'])} characters"
         )
         
     except Exception as e:
@@ -109,327 +97,267 @@ async def extractor_agent(state: UnderwritingState) -> UnderwritingState:
     return state
 
 
-# ═══════════════════════════════════════════════════════════════
-# AGENT 2: CLAUSE ANALYZER
-# ═══════════════════════════════════════════════════════════════
-
+#clause analyzer agent using insurance server for category detection and corpus search
 async def analyzer_agent(state: UnderwritingState) -> UnderwritingState:
-    """
-    Detects clause categories from the policy text.
-    Calls: MCP Server 1 → search_corpus() to find matching clauses
-    """
+    """Detect clauses and search corpus using Insurance Server"""
     logger.info("🔍 AGENT 2: ANALYZER — Detecting clauses...")
-    state["agent_logs"].append("🔍 ANALYZER: Searching for clause types...")
+    state["agent_logs"].append("🔍 ANALYZER: Detecting clause types via Insurance Server...")
     
     if state.get("parse_error"):
         state["agent_logs"].append("⚠️ ANALYZER: Skipped — parser failed")
         return state
     
-    from src.mcp_insurance.tools.pipeline import _detect_categories_from_text
+    try:
+        # Try to auto-detect categories
+        categories = await mcp_manager.detect_categories(state["full_text"])
+        state["detected_categories"] = categories
+        
+        if not categories:
+            # Fallback: use common categories
+            categories = [
+                "cap on liability",
+                "indemnification",
+                "warranty",
+                "termination",
+                "confidentiality"
+            ]
+            state["detected_categories"] = categories
+            state["agent_logs"].append("⚠️ Using default categories")
+        
+        state["agent_logs"].append(
+            f"✅ ANALYZER: Found {len(categories)} clause types"
+        )
+        
+        # Search corpus for each category
+        search_results = {}
+        for cat in categories:
+            try:
+                results = await mcp_manager.search_corpus(cat, top_k=3)
+                search_results[cat] = results if isinstance(results, list) else []
+                state["agent_logs"].append(
+                    f"   📄 '{cat}': {len(search_results[cat])} matches"
+                )
+            except Exception as e:
+                state["agent_logs"].append(f"   ⚠️ '{cat}': search failed — {e}")
+                search_results[cat] = []
+        
+        state["search_results"] = search_results
+        
+    except Exception as e:
+        state["agent_logs"].append(f"❌ ANALYZER: Failed — {e}")
+        state["errors"].append(f"Analyzer error: {e}")
     
-    categories = _detect_categories_from_text(state["full_text"])
-    state["detected_categories"] = categories
-    
-    if not categories:
-        state["agent_logs"].append("⚠️ ANALYZER: No clause categories detected")
-        return state
-    
-    state["agent_logs"].append(
-        f"✅ ANALYZER: Found {len(categories)} clause types"
-    )
-    
-    # For each category, search the corpus for similar clauses
-    search_results = {}
-    for cat in categories:
-        try:
-            results = await search_corpus(cat, top_k=3)
-            search_results[cat] = results
-            state["agent_logs"].append(f"   📄 '{cat}': {len(results)} matches found")
-        except Exception as e:
-            state["agent_logs"].append(f"   ⚠️ '{cat}': search failed — {e}")
-            search_results[cat] = []
-    
-    state["search_results"] = search_results
     return state
 
 
-# ═══════════════════════════════════════════════════════════════
-# AGENT 3: RISK ASSESSOR
-# ═══════════════════════════════════════════════════════════════
-
+#agent 3: risk assessor using Risk Server
 async def risk_assessor_agent(state: UnderwritingState) -> UnderwritingState:
-    """
-    Rates each detected clause and produces risk assessment.
-    Calls: MCP Server 2 → rate_clause() + assess_submission_risk()
-    """
-    logger.info("🔍 AGENT 3: RISK ASSESSOR — Rating clauses...")
-    state["agent_logs"].append("📊 RISK ASSESSOR: Analyzing risk profile...")
+    """Assess risk using Risk Server (analyze_submission_text)"""
+    logger.info("🔍 AGENT 3: RISK ASSESSOR — Using Risk Server...")
+    state["agent_logs"].append("📊 RISK ASSESSOR: Analyzing risk via Risk Server...")
     
-    if not state.get("detected_categories"):
-        state["agent_logs"].append("⚠️ RISK ASSESSOR: No categories to rate")
+    if not state.get("full_text"):
+        state["agent_logs"].append("⚠️ RISK ASSESSOR: No text to analyze")
         return state
     
-    rated_clauses = []
-    
-    for category in state["detected_categories"]:
-        # Use the top search result text for rating
-        search_results = state.get("search_results", {}).get(category, [])
-        
-        if search_results:
-            clause_text = search_results[0].get("text", state["full_text"])
-        else:
-            clause_text = state["full_text"]
-        
-        try:
-            rating_result = await rate_clause(clause_text, category=category)
-            
-            rated_clauses.append({
-                "category": category,
-                "predicted_rating": rating_result.get("predicted_rating"),
-                "stars": rating_result.get("stars", "☆☆☆☆☆"),
-                "category_used": rating_result.get("category_used"),
-                "best_match_id": search_results[0]["doc_id"] if search_results else None,
-            })
-            
-            emoji = _get_emoji(rating_result.get("predicted_rating"))
-            state["agent_logs"].append(
-                f"   {emoji} {category}: {rating_result.get('predicted_rating', '?')}★ "
-                f"{rating_result.get('stars', '')}"
-            )
-            
-        except Exception as e:
-            state["agent_logs"].append(f"   ❌ {category}: rating failed — {e}")
-            rated_clauses.append({
-                "category": category,
-                "predicted_rating": None,
-                "stars": "☆☆☆☆☆",
-                "error": str(e),
-            })
-    
-    state["rated_clauses"] = rated_clauses
-    
-    # ─── Full risk assessment ───
-    policy_type = state.get("policy_data", {}).get("policy_type")
-    
     try:
-        mini_report = {
-            "results": [
-                {
-                    "query": c["category"],
-                    "rated_clauses": [
-                        {
-                            "predicted_rating": c["predicted_rating"],
-                            "stars": c["stars"],
-                        }
-                    ]
-                }
-                for c in rated_clauses
-            ]
-        }
-        risk = await assess_submission_risk(mini_report, policy_type=policy_type)
-        state["risk_assessment"] = risk
+        policy_type = state.get("policy_data", {}).get("policy_type")
+        
+        # Use Risk Server's analyze_submission_text (NOT insurance server's assess_submission_risk)
+        risk_result = await mcp_manager.analyze_submission_risk(
+            full_text=state["full_text"],
+            policy_type=policy_type
+        )
+        
+        state["risk_assessment"] = risk_result
+        
+        # Extract clause-level analyses
+        clause_analyses = []
+        if isinstance(risk_result, dict):
+            # Handle different response structures
+            clauses = risk_result.get("clauses", [])
+            if not clauses and "results" in risk_result:
+                clauses = risk_result.get("results", [])
+            
+            for clause in clauses:
+                if isinstance(clause, dict):
+                    clause_analyses.append({
+                        "clause_text": clause.get("text", clause.get("clause_text", "")),
+                        "rating": clause.get("rating", clause.get("predicted_rating", "N/A")),
+                        "risk_level": clause.get("risk_level", clause.get("overall_risk", "N/A")),
+                        "stars": clause.get("stars", "☆☆☆☆☆"),
+                    })
+        
+        state["clause_analyses"] = clause_analyses
+        
+        # Log results
+        overall_risk = risk_result.get("overall_risk", "UNKNOWN") if isinstance(risk_result, dict) else "UNKNOWN"
+        avg_rating = risk_result.get("average_rating", 0) if isinstance(risk_result, dict) else 0
         
         state["agent_logs"].append(
-            f"📊 OVERALL RISK: {risk.get('overall_risk_emoji', '')} "
-            f"{risk.get('overall_risk', 'UNKNOWN')} "
-            f"({risk.get('average_rating', 0)}/5.0)"
+            f"✅ RISK ASSESSOR: Overall Risk = {overall_risk} | Avg Rating = {avg_rating}/5.0"
+        )
+        state["agent_logs"].append(
+            f"   Analyzed {len(clause_analyses)} clauses"
         )
         
     except Exception as e:
         state["agent_logs"].append(f"❌ Risk assessment failed: {e}")
+        state["errors"].append(f"Risk assessor error: {e}")
         state["risk_assessment"] = {"error": str(e)}
     
     return state
 
 
-def _get_emoji(rating) -> str:
-    """Return emoji based on rating."""
-    if rating is None:
-        return "⚪"
-    if rating >= 4.0:
-        return "🟢"
-    elif rating >= 2.5:
-        return "🟡"
-    return "🔴"
-
-
-# ═══════════════════════════════════════════════════════════════
-# AGENT 4: UNDERWRITING ADVISOR
-# ═══════════════════════════════════════════════════════════════
-
+#underwriting advisor agent that makes recommendations based on risk assessment and clause analyses
 async def advisor_agent(state: UnderwritingState) -> UnderwritingState:
-    """
-    Makes underwriting recommendations based on risk analysis.
-    Uses rules + risk thresholds to decide: ACCEPT / CONDITIONAL / REFER.
-    """
+    """Make underwriting recommendations based on risk analysis"""
     logger.info("🔍 AGENT 4: ADVISOR — Making recommendations...")
     state["agent_logs"].append("🎯 ADVISOR: Formulating recommendations...")
     
     risk = state.get("risk_assessment", {})
-    rated = state.get("rated_clauses", [])
+    clauses = state.get("clause_analyses", [])
     
-    if not rated:
-        state["final_decision"] = "ERROR — No clauses rated"
-        state["agent_logs"].append("❌ ADVISOR: Cannot recommend — no data")
+    if not risk or risk.get("error"):
+        state["final_decision"] = "ERROR — Risk assessment failed"
+        state["decision_emoji"] = "❌"
+        state["agent_logs"].append("❌ ADVISOR: Cannot recommend — no risk data")
         return state
     
-    recommendations = []
-    negotiation_points = []
     strong_points = []
+    negotiation_points = []
     
-    # ─── Analyze each clause ───
-    for clause in rated:
-        rating = clause.get("predicted_rating")
-        category = clause.get("category", "unknown")
+    # Analyze each clause
+    for clause in clauses:
+        rating = clause.get("rating", 0)
+        clause_text = clause.get("clause_text", "")[:100]
         stars = clause.get("stars", "☆☆☆☆☆")
         
-        if rating is None:
-            continue
+        try:
+            rating_float = float(rating) if rating != "N/A" else 0
+        except (ValueError, TypeError):
+            rating_float = 0
         
-        if rating >= 4.0:
+        if rating_float >= 4.0:
             strong_points.append({
-                "category": category,
-                "rating": rating,
+                "clause": clause_text,
+                "rating": rating_float,
                 "stars": stars,
                 "action": "No change needed — strong protection"
             })
-        elif rating >= 2.5:
+        elif rating_float >= 2.5:
             negotiation_points.append({
-                "category": category,
-                "rating": rating,
+                "clause": clause_text,
+                "rating": rating_float,
                 "stars": stars,
                 "action": "Consider strengthening",
                 "priority": "SHOULD"
             })
         else:
             negotiation_points.append({
-                "category": category,
-                "rating": rating,
+                "clause": clause_text,
+                "rating": rating_float,
                 "stars": stars,
                 "action": "Must be revised",
                 "priority": "MUST"
             })
     
-    # ─── Check missing protections ───
-    missing = risk.get("missing_protections", [])
-    for m in missing:
-        negotiation_points.append({
-            "category": m.get("category", "unknown"),
-            "rating": None,
-            "stars": "☆☆☆☆☆",
-            "action": "Add missing protection",
-            "priority": "MUST"
-        })
+    # Check for missing protections
+    if isinstance(risk, dict):
+        missing = risk.get("missing_protections", [])
+        for m in missing:
+            negotiation_points.append({
+                "clause": m if isinstance(m, str) else m.get("category", "Unknown"),
+                "rating": 0,
+                "stars": "☆☆☆☆☆",
+                "action": "Add missing protection",
+                "priority": "MUST"
+            })
     
-    # ─── Sort by priority ───
-    priority_order = {"MUST": 0, "SHOULD": 1, "NICE_TO_HAVE": 2}
-    negotiation_points.sort(key=lambda x: priority_order.get(x.get("priority", "NICE_TO_HAVE"), 3))
+    # Sort by priority
+    priority_order = {"MUST": 0, "SHOULD": 1}
+    negotiation_points.sort(key=lambda x: priority_order.get(x.get("priority", "SHOULD"), 1))
     
-    state["recommendations"] = recommendations
-    state["negotiation_points"] = negotiation_points
     state["strong_points"] = strong_points
+    state["negotiation_points"] = negotiation_points
     
-    # ─── Final Decision ───
-    avg_rating = risk.get("average_rating", 0)
-    high_count = risk.get("high_risk_count", 0)
+    # Make decision
+    avg_rating = risk.get("average_rating", 0) if isinstance(risk, dict) else 0
     must_count = sum(1 for n in negotiation_points if n["priority"] == "MUST")
     
     if avg_rating >= 4.0 and must_count == 0:
-        decision = "✅ ACCEPT — Strong policy"
+        decision = "ACCEPT — Strong policy"
+        emoji = "✅"
     elif avg_rating >= 3.0 and must_count <= 1:
-        decision = "⚠️ ACCEPT WITH CONDITIONS — Minor revisions needed"
+        decision = "ACCEPT WITH CONDITIONS — Minor revisions needed"
+        emoji = "⚠️"
     elif avg_rating >= 2.5 and must_count <= 3:
-        decision = "🔶 REFER TO SENIOR UNDERWRITER — Significant concerns"
+        decision = "REFER TO SENIOR UNDERWRITER — Significant concerns"
+        emoji = "🔶"
     else:
-        decision = "🔴 REJECT — Major risk factors present"
+        decision = "REJECT — Major risk factors present"
+        emoji = "🔴"
     
     state["final_decision"] = decision
-    state["agent_logs"].append(f"🎯 ADVISOR: {decision}")
+    state["decision_emoji"] = emoji
+    state["agent_logs"].append(f"🎯 ADVISOR: {emoji} {decision}")
     
     return state
 
 
-# ═══════════════════════════════════════════════════════════════
-# AGENT 5: REPORTER
-# ═══════════════════════════════════════════════════════════════
-
+#reporter agent that generates a final report based on all previous analyses and recommendations
 async def reporter_agent(state: UnderwritingState) -> UnderwritingState:
-    """
-    Formats the final executive summary and full report.
-    """
+    """Generate final report"""
     logger.info("🔍 AGENT 5: REPORTER — Generating report...")
     state["agent_logs"].append("📋 REPORTER: Generating final report...")
     
     policy = state.get("policy_data", {})
     risk = state.get("risk_assessment", {})
     
-    # ─── Executive Summary ───
-    summary_lines = [
-        "╔══════════════════════════════════════════════════╗",
-        "║     MULTI-AGENT UNDERWRITING REPORT             ║",
-        "╚══════════════════════════════════════════════════╝",
-        "",
-        f"📄 POLICY: {policy.get('policy_number', 'N/A')}",
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    state["report_generated_at"] = now
+    
+    # Create executive summary
+    lines = [
+        "=" * 60,
+        "     MULTI-AGENT UNDERWRITING REPORT",
+        "=" * 60,
+        f"\n📄 POLICY: {policy.get('policy_number', 'N/A')}",
         f"🏢 INSURED: {policy.get('insured_name', 'N/A')}",
         f"📋 TYPE: {policy.get('policy_type', 'N/A')}",
         f"📅 PERIOD: {policy.get('effective_date', 'N/A')} → {policy.get('expiration_date', 'N/A')}",
-        "",
-        f"📊 OVERALL RISK: {risk.get('overall_risk_emoji', '')} {risk.get('overall_risk', 'N/A')}",
-        f"⭐ AVERAGE RATING: {risk.get('average_rating', 'N/A')}/5.0 {risk.get('average_stars', '')}",
-        "",
-        f"🎯 DECISION: {state.get('final_decision', 'N/A')}",
-        "",
+        f"\n📊 OVERALL RISK: {risk.get('overall_risk', 'N/A') if isinstance(risk, dict) else 'N/A'}",
+        f"⭐ AVERAGE RATING: {risk.get('average_rating', 'N/A') if isinstance(risk, dict) else 'N/A'}/5.0",
+        f"\n🎯 DECISION: {state.get('decision_emoji', '')} {state.get('final_decision', 'N/A')}",
     ]
     
     # Strong points
     if state.get("strong_points"):
-        summary_lines.append("🟢 STRONG POINTS:")
-        for sp in state["strong_points"]:
-            summary_lines.append(f"   ✅ {sp['category']}: {sp['rating']}★ {sp['stars']}")
-        summary_lines.append("")
+        lines.append("\n🟢 STRONG POINTS:")
+        for sp in state["strong_points"][:3]:
+            lines.append(f"   ✅ {sp['clause'][:80]}... ({sp['rating']}★)")
     
     # Required actions
     if state.get("negotiation_points"):
-        summary_lines.append("🔴 REQUIRED ACTIONS:")
-        for np in state["negotiation_points"]:
-            tag = "MUST" if np["priority"] == "MUST" else "SHOULD"
-            emoji = "🔴" if tag == "MUST" else "🟡"
-            summary_lines.append(f"   {emoji} [{tag}] {np['category']}: {np['action']}")
-        summary_lines.append("")
+        lines.append("\n🔴 REQUIRED ACTIONS:")
+        for np in state["negotiation_points"][:5]:
+            priority_tag = "MUST" if np["priority"] == "MUST" else "SHOULD"
+            emoji = "🔴" if priority_tag == "MUST" else "🟡"
+            lines.append(f"   {emoji} [{priority_tag}] {np['action']}")
     
-    # Agent processing summary
-    summary_lines.append("🤖 AGENT PROCESSING SUMMARY:")
-    for log in state.get("agent_logs", []):
-        summary_lines.append(f"   {log}")
+    lines.append(f"\n📅 Report generated: {now}")
+    lines.append(f"\n🤖 Pipeline: Insurance Server → Risk Server → Advisor → Report")
     
-    state["executive_summary"] = "\n".join(summary_lines)
-    state["full_report"] = state["executive_summary"]  # Could be extended
+    state["executive_summary"] = "\n".join(lines)
+    state["full_report"] = state["executive_summary"] + f"\n\nAgent Logs:\n" + "\n".join(state["agent_logs"])
     
-    state["agent_logs"].append("✅ REPORTER: Report generated")
+    state["agent_logs"].append("✅ REPORTER: Report generated successfully")
     return state
 
 
-# ═══════════════════════════════════════════════════════════════
-# CONDITIONAL ROUTING
-# ═══════════════════════════════════════════════════════════════
-
-def should_continue(state: UnderwritingState) -> str:
-    """Determine if pipeline should continue or abort."""
-    if state.get("parse_error"):
-        logger.warning("Parse error detected — routing to reporter with error")
-        return "reporter"  # Skip analysis, go straight to report
-    if not state.get("detected_categories"):
-        logger.warning("No categories detected — routing to reporter")
-        return "reporter"
-    return "continue"
-
-
-# ═══════════════════════════════════════════════════════════════
-# BUILD THE GRAPH
-# ═══════════════════════════════════════════════════════════════
-
+#buid graph that connects all agents in sequence and compiles it with memory checkpointing
 def build_underwriting_graph():
-    """Build and compile the LangGraph workflow."""
+    """Build and compile the LangGraph workflow"""
     
     workflow = StateGraph(UnderwritingState)
     
@@ -440,88 +368,54 @@ def build_underwriting_graph():
     workflow.add_node("advisor", advisor_agent)
     workflow.add_node("reporter", reporter_agent)
     
-    # Happy path: extractor → analyzer → risk → advisor → reporter → END
+    # Define edges
     workflow.add_edge("extractor", "analyzer")
     workflow.add_edge("analyzer", "risk_assessor")
     workflow.add_edge("risk_assessor", "advisor")
     workflow.add_edge("advisor", "reporter")
     workflow.add_edge("reporter", END)
     
-    # Entry point
     workflow.set_entry_point("extractor")
     
-    # Compile with memory (enables pause/resume for human-in-the-loop)
+    # Compile with memory
     memory = MemorySaver()
     app = workflow.compile(checkpointer=memory)
     
     return app
 
 
-# ═══════════════════════════════════════════════════════════════
-# RUN
-# ═══════════════════════════════════════════════════════════════
-
-async def run_underwriting_assistant(pdf_path: str, thread_id: str = "default") -> Dict[str, Any]:
-    """
-    Run the complete multi-agent underwriting pipeline.
+#pipeline running
+async def run_underwriting_pipeline(
+    pdf_path: str,
+    submission_id: str = "default"
+) -> Dict[str, Any]:
+    """Run the complete underwriting pipeline"""
     
-    Args:
-        pdf_path: Path to the insurance submission PDF.
-        thread_id: Unique ID for this run (enables conversation memory).
-    
-    Returns:
-        Final state with all agent outputs.
-    """
     app = build_underwriting_graph()
     
     initial_state: UnderwritingState = {
         "pdf_path": pdf_path,
+        "submission_id": submission_id,
         "full_text": "",
         "policy_data": {},
         "parse_error": None,
         "detected_categories": [],
         "search_results": {},
-        "rated_clauses": [],
         "risk_assessment": {},
+        "clause_analyses": [],
         "recommendations": [],
         "negotiation_points": [],
         "strong_points": [],
         "final_decision": "",
+        "decision_emoji": "",
         "executive_summary": "",
         "full_report": "",
+        "report_generated_at": "",
         "agent_logs": [],
         "errors": [],
     }
     
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": submission_id}}
     
     result = await app.ainvoke(initial_state, config)
     return result
-
-
-# ═══════════════════════════════════════════════════════════════
-# MAIN
-# ═══════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    async def main():
-        import sys
-        
-        if len(sys.argv) < 2:
-            print("Usage: python langgraph_underwriting.py <path_to_pdf>")
-            sys.exit(1)
-        
-        pdf_path = sys.argv[1]
-        
-        print("🚀 Starting Multi-Agent Underwriting Assistant...")
-        print(f"📄 Processing: {pdf_path}")
-        print("-" * 60)
-        
-        result = await run_underwriting_assistant(pdf_path)
-        
-        # Print executive summary
-        print(result["executive_summary"])
-        print("-" * 60)
-        print(f"🤖 Total agent steps: {len(result['agent_logs'])}")
-        
-    asyncio.run(main())
