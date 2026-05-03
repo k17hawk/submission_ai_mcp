@@ -1,122 +1,141 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+// App.tsx
+import React, { useState, useCallback } from 'react';
+import { Header } from './components/Header';
+import { FileUpload } from './components/FileUpload';
+import { ProgressTracker } from './components/ProgressTracker';
+import { ReportView } from './components/ReportView';
+import { Sidebar } from './components/Sidebar';
+import { Toast } from './components/Toast';
+import { useSubmission } from './hooks/useSubmission';
+import type { ReportData } from './types';
+import type { ToastMessage } from './types';
+import './styles.css';
+
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [report, setReport] = useState<ReportData | null>(null);
+  const [showReport, setShowReport] = useState(false);
+  const [showUpload, setShowUpload] = useState(true);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [processingTime, setProcessingTime] = useState<string>('-');
+
+  const {
+    isProcessing,
+    progress,
+    agentStatus,
+    submitFile,
+    startPolling,
+    cancelPolling
+  } = useSubmission();
+
+  const addToast = useCallback((message: string, type: ToastMessage['type'] = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+  }, []);
+
+  const removeToast = useCallback((id: number) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const handleFileSelected = useCallback((file: File | null) => {
+    setSelectedFile(file);
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!selectedFile) return;
+
+    try {
+      const submissionId = await submitFile(selectedFile);
+      addToast('Submission received! Processing...', 'success');
+
+      startPolling(
+        submissionId,
+        (reportData) => {
+          setReport(reportData);
+          setShowReport(true);
+          setShowUpload(false);
+          setProcessingTime(
+            reportData.processing_time_seconds 
+              ? `${reportData.processing_time_seconds.toFixed(1)}s` 
+              : '-'
+          );
+          addToast('Report generated successfully!', 'success');
+        },
+        (error) => {
+          addToast(`Processing failed: ${error}`, 'error');
+        }
+      );
+    } catch (error: any) {
+      addToast(`Error: ${error.message}`, 'error');
+    }
+  };
+
+  const handleReset = () => {
+    setSelectedFile(null);
+    setReport(null);
+    setShowReport(false);
+    setShowUpload(true);
+    setProcessingTime('-');
+    cancelPolling();
+  };
 
   return (
     <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
+      <Header />
+      
+      <div className="main-container">
         <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+          {showUpload && (
+            <>
+              <FileUpload onFileSelected={handleFileSelected} />
+              
+              <button
+                className="btn btn-primary btn-block"
+                disabled={!selectedFile || isProcessing}
+                onClick={handleSubmit}
+                style={{ marginTop: '20px' }}
+              >
+                {isProcessing ? (
+                  <>
+                    <span className="spinner" />
+                    Processing...
+                  </>
+                ) : (
+                  '🚀 Process Submission'
+                )}
+              </button>
 
-      <div className="ticks"></div>
+              <ProgressTracker
+                progress={progress}
+                agentStatus={agentStatus}
+                isVisible={isProcessing}
+              />
+            </>
+          )}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          <ReportView
+            report={report}
+            isVisible={showReport}
+            onReset={handleReset}
+          />
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
+        <Sidebar report={report} processingTime={processingTime} />
+      </div>
+
+      <div className="toast-container">
+        {toasts.map(toast => (
+          <Toast
+            key={toast.id}
+            message={toast.message}
+            type={toast.type}
+            onClose={() => removeToast(toast.id)}
+          />
+        ))}
+      </div>
     </>
-  )
+  );
 }
 
-export default App
+export default App;
