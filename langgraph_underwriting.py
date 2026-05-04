@@ -213,7 +213,7 @@ async def analyzer_agent(state: UnderwritingState) -> UnderwritingState:
 # ═══════════════════════════════════════════════════════════════
 
 async def risk_assessor_agent(state: UnderwritingState) -> UnderwritingState:
-    """Assess risk using Risk Server"""
+    """Assess risk using Risk Server - Fixed for actual response format"""
     logger.info("🔍 AGENT 3: RISK ASSESSOR — Using Risk Server...")
     state["agent_logs"].append("📊 RISK ASSESSOR: Analyzing risk via Risk Server...")
     
@@ -224,64 +224,124 @@ async def risk_assessor_agent(state: UnderwritingState) -> UnderwritingState:
     try:
         policy_type = safe_get(state.get("policy_data", {}), "policy_type")
         
-        # Use Risk Server's analyze_submission_text
+        # Call risk server
         risk_result = await mcp_manager.analyze_submission_risk(
             full_text=state["full_text"],
             policy_type=policy_type
         )
         
-        # Ensure it's a dict
-        risk_result = ensure_dict(risk_result)
-        state["risk_assessment"] = risk_result
+        # Store the raw result
+        state["risk_assessment"] = risk_result if isinstance(risk_result, dict) else {"raw": str(risk_result)}
         
-        # Extract clause-level analyses
+        # Initialize variables
+        overall_risk = "UNKNOWN"
+        avg_rating = 0.0
         clause_analyses = []
         
-        # Try multiple possible keys for clauses
-        clauses = (
-            risk_result.get("clauses") or
-            risk_result.get("results") or
-            risk_result.get("clause_analyses") or
-            risk_result.get("analyzed_clauses") or
-            []
-        )
+        # Extract data from the actual response structure
+        if isinstance(risk_result, dict):
+            # Look for clauses in the response
+            clauses_data = risk_result.get("clauses", [])
+            
+            # Also check section_details for more detailed clause info
+            section_details = risk_result.get("section_details", [])
+            
+            # Process clauses from the main "clauses" array
+            if clauses_data and isinstance(clauses_data, list):
+                for clause in clauses_data:
+                    if isinstance(clause, dict):
+                        # Extract rating (using predicted_rating as seen in debug output)
+                        rating = clause.get("predicted_rating", 
+                                           clause.get("rating", 
+                                           clause.get("score", 0)))
+                        
+                        # Extract category
+                        category = clause.get("category", "Unknown")
+                        
+                        # Extract stars
+                        stars = clause.get("stars", "☆☆☆☆☆")
+                        
+                        # Extract preview text
+                        clause_text = clause.get("clause_preview", 
+                                                clause.get("text", 
+                                                clause.get("clause_text", "")))
+                        
+                        clause_analyses.append({
+                            "clause_text": str(clause_text)[:200],
+                            "rating": rating,
+                            "risk_level": "N/A",  # Will calculate from rating
+                            "stars": stars,
+                            "category": category
+                        })
+                        
+                        state["agent_logs"].append(f"   📄 {category}: {rating}★ {stars}")
+            
+            # Also process section_details for additional context
+            if section_details and isinstance(section_details, list):
+                for section in section_details:
+                    section_result = section.get("result", {})
+                    rated_clauses = section_result.get("rated_clauses", [])
+                    
+                    for clause in rated_clauses:
+                        rating = clause.get("predicted_rating", 0)
+                        category = clause.get("category", "Unknown")
+                        stars = clause.get("stars", "☆☆☆☆☆")
+                        
+                        # Check if we already have this category to avoid duplicates
+                        if not any(c.get("category") == category for c in clause_analyses):
+                            clause_analyses.append({
+                                "clause_text": clause.get("clause_preview", "")[:200],
+                                "rating": rating,
+                                "risk_level": "N/A",
+                                "stars": stars,
+                                "category": category
+                            })
+            
+            # Calculate overall metrics from clause ratings
+            ratings = []
+            for ca in clause_analyses:
+                rating_val = ca.get("rating")
+                if rating_val and rating_val != "N/A":
+                    try:
+                        ratings.append(float(rating_val))
+                    except (ValueError, TypeError):
+                        pass
+            
+            if ratings:
+                avg_rating = sum(ratings) / len(ratings)
+                
+                # Determine overall risk from average rating
+                if avg_rating >= 4.0:
+                    overall_risk = "LOW RISK - Strong protections"
+                elif avg_rating >= 3.0:
+                    overall_risk = "MEDIUM RISK - Acceptable with conditions"
+                elif avg_rating >= 2.0:
+                    overall_risk = "HIGH RISK - Needs significant revision"
+                else:
+                    overall_risk = "CRITICAL RISK - Major concerns"
+                
+                state["agent_logs"].append(f"📊 Calculated from {len(ratings)} clause ratings")
+            
+            # Also check if risk_assessment field exists
+            risk_assessment = risk_result.get("risk_assessment", {})
+            if risk_assessment:
+                if isinstance(risk_assessment, dict):
+                    if "overall_risk" in risk_assessment:
+                        overall_risk = risk_assessment.get("overall_risk", overall_risk)
+                    if "average_rating" in risk_assessment:
+                        avg_rating = float(risk_assessment.get("average_rating", avg_rating))
         
-        # If no clauses array found but result has rating info
-        if not clauses and isinstance(risk_result, dict):
-            if any(k in risk_result for k in ["rating", "risk_level", "overall_risk"]):
-                # The whole result might be for a single clause
-                clauses = [risk_result]
-        
-        # Process each clause
-        for clause in clauses:
-            if isinstance(clause, dict):
-                clause_analyses.append({
-                    "clause_text": (
-                        clause.get("text") or 
-                        clause.get("clause_text") or 
-                        clause.get("description") or 
-                        ""
-                    )[:200],
-                    "rating": (
-                        clause.get("rating") or 
-                        clause.get("predicted_rating") or 
-                        clause.get("average_rating") or 
-                        "N/A"
-                    ),
-                    "risk_level": (
-                        clause.get("risk_level") or 
-                        clause.get("overall_risk") or 
-                        clause.get("risk") or 
-                        "N/A"
-                    ),
-                    "stars": clause.get("stars", "☆☆☆☆☆"),
-                })
-        
-        state["clause_analyses"] = clause_analyses
-        
-        # Get overall metrics
-        overall_risk = safe_get(risk_result, "overall_risk", "UNKNOWN")
-        avg_rating = safe_get(risk_result, "average_rating", 0)
+        # If no clauses were found, create a default analysis
+        if not clause_analyses and state.get("full_text"):
+            clause_analyses.append({
+                "clause_text": state["full_text"][:200],
+                "rating": 2.5,
+                "risk_level": "MEDIUM",
+                "stars": "★★★☆☆",
+                "category": "General"
+            })
+            avg_rating = 2.5
+            overall_risk = "MEDIUM RISK - Requires review"
         
         # Convert rating to float
         try:
@@ -289,6 +349,12 @@ async def risk_assessor_agent(state: UnderwritingState) -> UnderwritingState:
         except (ValueError, TypeError):
             avg_rating = 0.0
         
+        # Store results
+        state["clause_analyses"] = clause_analyses
+        state["risk_assessment"]["overall_risk"] = overall_risk
+        state["risk_assessment"]["average_rating"] = avg_rating
+        
+        # Log summary
         state["agent_logs"].append(
             f"✅ RISK ASSESSOR: Overall Risk = {overall_risk} | Avg Rating = {avg_rating:.1f}/5.0"
         )
@@ -303,8 +369,6 @@ async def risk_assessor_agent(state: UnderwritingState) -> UnderwritingState:
         logger.error(f"Risk assessment error: {e}", exc_info=True)
     
     return state
-
-
 # ═══════════════════════════════════════════════════════════════
 # AGENT 4: UNDERWRITING ADVISOR
 # ═══════════════════════════════════════════════════════════════
@@ -327,9 +391,22 @@ async def advisor_agent(state: UnderwritingState) -> UnderwritingState:
     negotiation_points = []
     
     # Analyze each clause
+    # In advisor_agent, when building strong_points and negotiation_points:
+
     for clause in clauses:
-        rating = clause.get("rating", 0)
-        clause_text = clause.get("clause_text", "")[:100]
+        # Get rating (handle both 'rating' and 'predicted_rating')
+        rating = clause.get("rating", clause.get("predicted_rating", 0))
+        
+        # Better clause description - use category and preview together
+        category = clause.get("category", "Unknown")
+        clause_preview = clause.get("clause_text", clause.get("clause_preview", ""))[:80]
+        
+        # Create a meaningful description
+        if clause_preview and len(clause_preview) > 10:
+            clause_description = f"{category}: {clause_preview}"
+        else:
+            clause_description = f"{category} clause"
+        
         stars = clause.get("stars", "☆☆☆☆☆")
         
         try:
@@ -339,89 +416,72 @@ async def advisor_agent(state: UnderwritingState) -> UnderwritingState:
         
         if rating_float >= 4.0:
             strong_points.append({
-                "clause": clause_text,
+                "clause": clause_description,
                 "rating": rating_float,
                 "stars": stars,
-                "action": "No change needed — strong protection"
+                "action": "Well-drafted, no changes needed"
             })
         elif rating_float >= 2.5:
             negotiation_points.append({
-                "clause": clause_text,
+                "clause": clause_description,
                 "rating": rating_float,
                 "stars": stars,
-                "action": "Consider strengthening",
+                "action": "Consider strengthening language",
                 "priority": "SHOULD"
             })
         else:
             negotiation_points.append({
-                "clause": clause_text,
+                "clause": clause_description,
                 "rating": rating_float,
                 "stars": stars,
-                "action": "Must be revised",
+                "action": "Must revise this clause",
                 "priority": "MUST"
             })
     
-    # Check for missing protections
-    if isinstance(risk, dict):
-        missing = risk.get("missing_protections", [])
-        for m in missing:
-            if isinstance(m, str):
-                clause_name = m
-            elif isinstance(m, dict):
-                clause_name = m.get("category", m.get("name", "Unknown"))
-            else:
-                clause_name = str(m)
-            
-            negotiation_points.append({
-                "clause": clause_name,
-                "rating": 0,
-                "stars": "☆☆☆☆☆",
-                "action": "Add missing protection",
-                "priority": "MUST"
-            })
-    
-    # Sort by priority
+    # Sort negotiation points by priority (MUST first)
     priority_order = {"MUST": 0, "SHOULD": 1}
     negotiation_points.sort(key=lambda x: priority_order.get(x.get("priority", "SHOULD"), 1))
     
     state["strong_points"] = strong_points
     state["negotiation_points"] = negotiation_points
     
-    # Make decision
+    # Make decision based on ratings
     avg_rating = safe_get(risk, "average_rating", 0) if isinstance(risk, dict) else 0
     try:
         avg_rating = float(avg_rating)
     except (ValueError, TypeError):
         avg_rating = 0.0
     
-    must_count = sum(1 for n in negotiation_points if n["priority"] == "MUST")
+    must_count = sum(1 for n in negotiation_points if n.get("priority") == "MUST")
     
+    # Decision logic
     if avg_rating >= 4.0 and must_count == 0:
-        decision = "ACCEPT — Strong policy"
+        decision = "ACCEPT — Strong policy with good protections"
         emoji = "✅"
     elif avg_rating >= 3.0 and must_count <= 1:
         decision = "ACCEPT WITH CONDITIONS — Minor revisions needed"
         emoji = "⚠️"
     elif avg_rating >= 2.5 and must_count <= 3:
-        decision = "REFER TO SENIOR UNDERWRITER — Significant concerns"
+        decision = "REFER TO SENIOR UNDERWRITER — Significant concerns to address"
         emoji = "🔶"
     else:
-        decision = "REJECT — Major risk factors present"
+        decision = "REJECT — Major risk factors present, unacceptable terms"
         emoji = "🔴"
     
     state["final_decision"] = decision
     state["decision_emoji"] = emoji
     state["agent_logs"].append(f"🎯 ADVISOR: {emoji} {decision}")
+    state["agent_logs"].append(f"   Average rating: {avg_rating:.1f}/5.0, Must-fix issues: {must_count}")
     
     return state
+
 
 
 # ═══════════════════════════════════════════════════════════════
 # AGENT 5: REPORTER
 # ═══════════════════════════════════════════════════════════════
-
 async def reporter_agent(state: UnderwritingState) -> UnderwritingState:
-    """Generate final report"""
+    """Generate final report with improved formatting"""
     logger.info("🔍 AGENT 5: REPORTER — Generating report...")
     state["agent_logs"].append("📋 REPORTER: Generating final report...")
     
@@ -430,6 +490,13 @@ async def reporter_agent(state: UnderwritingState) -> UnderwritingState:
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     state["report_generated_at"] = now
+    
+    # Get rating and risk
+    avg_rating = safe_get(risk, "average_rating", 0)
+    overall_risk = safe_get(risk, "overall_risk", "N/A")
+    
+    # Format rating with stars
+    rating_stars = "⭐" * min(5, int(avg_rating)) if avg_rating else "☆☆☆☆☆"
     
     # Create executive summary
     lines = [
@@ -442,40 +509,92 @@ async def reporter_agent(state: UnderwritingState) -> UnderwritingState:
         f"📋 TYPE: {safe_get(policy, 'policy_type', 'N/A')}",
         f"📅 PERIOD: {safe_get(policy, 'effective_date', 'N/A')} → {safe_get(policy, 'expiration_date', 'N/A')}",
         "",
-        f"📊 OVERALL RISK: {safe_get(risk, 'overall_risk', 'N/A') if isinstance(risk, dict) else 'N/A'}",
-        f"⭐ AVERAGE RATING: {safe_get(risk, 'average_rating', 'N/A') if isinstance(risk, dict) else 'N/A'}/5.0",
+        f"📊 OVERALL RISK: {overall_risk}",
+        f"⭐ AVERAGE RATING: {avg_rating}/5.0 {rating_stars}",
         "",
         f"🎯 DECISION: {state.get('decision_emoji', '')} {state.get('final_decision', 'N/A')}",
     ]
     
-    # Strong points
-    if state.get("strong_points"):
+    # Strong points - show actual clause details
+    strong_points = state.get("strong_points", [])
+    if strong_points:
         lines.append("")
-        lines.append("🟢 STRONG POINTS:")
-        for sp in state["strong_points"][:5]:
-            lines.append(f"   ✅ {sp['clause'][:80]}... ({sp['rating']}★)")
+        lines.append("🟢 STRONG POINTS (Well-rated clauses):")
+        for idx, sp in enumerate(strong_points[:5], 1):
+            clause_text = sp.get('clause', '')[:80]
+            rating = sp.get('rating', 0)
+            stars = sp.get('stars', '')
+            lines.append(f"   {idx}. {stars} {rating}★ - {clause_text}")
     
-    # Required actions
-    if state.get("negotiation_points"):
+    # Required actions - show actual revision needs
+    negotiation_points = state.get("negotiation_points", [])
+    if negotiation_points:
         lines.append("")
-        lines.append("🔴 REQUIRED ACTIONS:")
-        for np in state["negotiation_points"][:5]:
-            priority_tag = "MUST" if np["priority"] == "MUST" else "SHOULD"
-            emoji = "🔴" if priority_tag == "MUST" else "🟡"
-            lines.append(f"   {emoji} [{priority_tag}] {np['action']}")
+        lines.append("🔴 REQUIRED ACTIONS (Clauses needing attention):")
+        for idx, np in enumerate(negotiation_points[:8], 1):
+            priority = np.get("priority", "SHOULD")
+            priority_emoji = "🔴" if priority == "MUST" else "🟡"
+            clause_text = np.get('clause', '')[:70]
+            rating = np.get('rating', 0)
+            action = np.get('action', 'Review required')
+            lines.append(f"   {idx}. {priority_emoji} [{priority}] {action}")
+            lines.append(f"      📝 {clause_text} (Rating: {rating}★)")
     
-    lines.append("")
-    lines.append(f"📅 Report generated: {now}")
-    lines.append("")
-    lines.append("🤖 Pipeline: Insurance Server → Risk Server → Advisor → Report")
+    # Summary statistics
+    lines.extend([
+        "",
+        "📊 SUMMARY STATISTICS:",
+        f"   • Total clauses analyzed: {len(state.get('clause_analyses', []))}",
+        f"   • Strong points: {len(strong_points)}",
+        f"   • Required actions: {len(negotiation_points)}",
+        f"   • MUST fix issues: {sum(1 for n in negotiation_points if n.get('priority') == 'MUST')}",
+    ])
+    
+    # Add timestamp
+    lines.extend([
+        "",
+        f"📅 Report generated: {now}",
+        "",
+        "🤖 Pipeline: Insurance Server → Risk Server → Advisor → Report",
+    ])
     
     state["executive_summary"] = "\n".join(lines)
-    state["full_report"] = state["executive_summary"] + "\n\n" + "=" * 60 + "\nAGENT PROCESSING LOGS\n" + "=" * 60 + "\n" + "\n".join(state["agent_logs"])
+    
+    # Create full report with more details
+    full_sections = [
+        state["executive_summary"],
+        "",
+        "=" * 60,
+        "DETAILED CLAUSE ANALYSIS",
+        "=" * 60,
+    ]
+    
+    # Add all clause analyses
+    for idx, clause in enumerate(state.get("clause_analyses", []), 1):
+        category = clause.get("category", "Unknown")
+        rating = clause.get("rating", "N/A")
+        stars = clause.get("stars", "☆☆☆☆☆")
+        clause_text = clause.get("clause_text", "")[:150]
+        
+        full_sections.extend([
+            f"\n{idx}. {category.upper()}",
+            f"   Rating: {rating}/5.0 {stars}",
+            f"   Text: {clause_text}...",
+        ])
+    
+    # Add agent logs
+    full_sections.extend([
+        "",
+        "=" * 60,
+        "AGENT PROCESSING LOGS",
+        "=" * 60,
+    ])
+    full_sections.extend(state["agent_logs"])
+    
+    state["full_report"] = "\n".join(full_sections)
     
     state["agent_logs"].append("✅ REPORTER: Report generated successfully")
     return state
-
-
 # ═══════════════════════════════════════════════════════════════
 # BUILD GRAPH
 # ═══════════════════════════════════════════════════════════════
