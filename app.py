@@ -7,14 +7,16 @@ import asyncio
 import logging
 import os
 import uuid
+import json
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.concurrency import asynccontextmanager
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from mcp_client import mcp_manager
@@ -31,11 +33,104 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, restrict this to your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Store for background tasks and results
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 processing_jobs = {}
+
+
+# ═══════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ═══════════════════════════════════════════════════════════════
+
+def safe_extract(obj: Any, default: Any = None) -> Any:
+    """
+    Safely extract value from objects that might be CallToolResult or other MCP types.
+    """
+    if obj is None:
+        return default
+    
+    # If it's already a basic type, return as is
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    
+    # If it's a dict, return as is
+    if isinstance(obj, dict):
+        return obj
+    
+    # If it's a list, return as is
+    if isinstance(obj, list):
+        return obj
+    
+    # Handle CallToolResult or similar objects
+    if hasattr(obj, 'content'):
+        content = obj.content
+        if isinstance(content, list) and len(content) > 0:
+            if hasattr(content[0], 'text'):
+                try:
+                    return json.loads(content[0].text)
+                except (json.JSONDecodeError, AttributeError):
+                    return content[0].text
+            return content[0]
+        return content
+    
+    # Try to convert to dict if it has dict() method
+    try:
+        return obj.dict()
+    except (AttributeError, TypeError):
+        pass
+    
+    # Try to convert to string
+    try:
+        return str(obj)
+    except:
+        return default
+
+
+def safe_dict_get(obj: Any, key: str, default: Any = None) -> Any:
+    """
+    Safely get a key from an object that might be CallToolResult or dict.
+    """
+    # First extract the actual data
+    data = safe_extract(obj)
+    
+    # Now try to get the key
+    if isinstance(data, dict):
+        return data.get(key, default)
+    
+    return default
+
+
+def normalize_result(result: Any) -> Dict[str, Any]:
+    """
+    Normalize the pipeline result to ensure it's a proper dictionary.
+    """
+    # Extract the actual data
+    data = safe_extract(result)
+    
+    if not isinstance(data, dict):
+        logger.warning(f"Result is not a dict after extraction: {type(data)}")
+        return {
+            "executive_summary": str(data),
+            "full_report": str(data),
+            "agent_logs": [],
+            "errors": [f"Unexpected result type: {type(data)}"],
+            "report_generated_at": datetime.now().isoformat(),
+            "final_decision": "Unknown",
+            "decision_emoji": "❓"
+        }
+    
+    return data
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -58,17 +153,17 @@ class ProcessingStatus(BaseModel):
 
 class UnderwritingReport(BaseModel):
     submission_id: str
-    policy_number: Optional[str]
-    insured_name: Optional[str]
-    policy_type: Optional[str]
-    overall_risk: Optional[str]
-    average_rating: Optional[float]
-    final_decision: Optional[str]
-    decision_emoji: Optional[str]
+    policy_number: Optional[str] = None
+    insured_name: Optional[str] = None
+    policy_type: Optional[str] = None
+    overall_risk: Optional[str] = None
+    average_rating: Optional[float] = None
+    final_decision: Optional[str] = None
+    decision_emoji: Optional[str] = None
     executive_summary: str
     full_report: str
-    agent_logs: List[str]
-    errors: List[str]
+    agent_logs: List[str] = []
+    errors: List[str] = []
     generated_at: str
     processing_time_seconds: float
 
@@ -136,10 +231,15 @@ async def health_check():
     """Check if API and MCP servers are running"""
     mcp_status = await mcp_manager.verify_servers()
     
+    # Ensure all values are JSON serializable
+    normalized_status = {}
+    for server, info in mcp_status.items():
+        normalized_status[server] = safe_extract(info, {"status": "unknown"})
+    
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "mcp_servers": mcp_status
+        "mcp_servers": normalized_status
     }
 
 
@@ -202,7 +302,7 @@ async def get_status(submission_id: str):
     )
 
 
-@app.get("/api/report/{submission_id}", response_model=UnderwritingReport)
+@app.get("/api/report/{submission_id}")
 async def get_report(submission_id: str):
     """Get the final underwriting report"""
     if submission_id not in processing_jobs:
@@ -215,27 +315,55 @@ async def get_report(submission_id: str):
     
     result = job["result"]
     
+    # Normalize the result to ensure it's a proper dictionary
+    result = normalize_result(result)
+    
     # Calculate processing time
     start = datetime.fromisoformat(job["started_at"])
     end = datetime.fromisoformat(job["completed_at"])
     processing_time = (end - start).total_seconds()
     
-    return UnderwritingReport(
-        submission_id=submission_id,
-        policy_number=result.get("policy_data", {}).get("policy_number"),
-        insured_name=result.get("policy_data", {}).get("insured_name"),
-        policy_type=result.get("policy_data", {}).get("policy_type"),
-        overall_risk=result.get("risk_assessment", {}).get("overall_risk") if isinstance(result.get("risk_assessment"), dict) else None,
-        average_rating=result.get("risk_assessment", {}).get("average_rating") if isinstance(result.get("risk_assessment"), dict) else None,
-        final_decision=result.get("final_decision"),
-        decision_emoji=result.get("decision_emoji"),
-        executive_summary=result.get("executive_summary", ""),
-        full_report=result.get("full_report", ""),
-        agent_logs=result.get("agent_logs", []),
-        errors=result.get("errors", []),
-        generated_at=result.get("report_generated_at", ""),
-        processing_time_seconds=processing_time
-    )
+    # Safely extract nested values
+    policy_data = safe_extract(result.get("policy_data"), {})
+    risk_assessment = safe_extract(result.get("risk_assessment"), {})
+    
+    # Build the report
+    report = {
+        "submission_id": submission_id,
+        "policy_number": safe_dict_get(policy_data, "policy_number"),
+        "insured_name": safe_dict_get(policy_data, "insured_name"),
+        "policy_type": safe_dict_get(policy_data, "policy_type"),
+        "overall_risk": safe_dict_get(risk_assessment, "overall_risk") if isinstance(risk_assessment, dict) else None,
+        "average_rating": safe_dict_get(risk_assessment, "average_rating") if isinstance(risk_assessment, dict) else None,
+        "final_decision": safe_dict_get(result, "final_decision", "Unknown"),
+        "decision_emoji": safe_dict_get(result, "decision_emoji", "❓"),
+        "executive_summary": safe_dict_get(result, "executive_summary", ""),
+        "full_report": safe_dict_get(result, "full_report", ""),
+        "agent_logs": safe_extract(result.get("agent_logs"), []),
+        "errors": safe_extract(result.get("errors"), []),
+        "generated_at": safe_dict_get(result, "report_generated_at", datetime.now().isoformat()),
+        "processing_time_seconds": processing_time
+    }
+    
+    # Ensure agent_logs and errors are lists
+    if not isinstance(report["agent_logs"], list):
+        report["agent_logs"] = [str(report["agent_logs"])]
+    if not isinstance(report["errors"], list):
+        report["errors"] = [str(report["errors"])]
+    
+    # Ensure strings for text fields
+    for field in ["executive_summary", "full_report", "final_decision", "decision_emoji"]:
+        if not isinstance(report[field], str):
+            report[field] = str(report[field]) if report[field] is not None else ""
+    
+    # Ensure numeric fields
+    if report["average_rating"] is not None:
+        try:
+            report["average_rating"] = float(report["average_rating"])
+        except (ValueError, TypeError):
+            report["average_rating"] = None
+    
+    return report
 
 
 @app.delete("/api/submission/{submission_id}")
@@ -263,19 +391,25 @@ async def process_submission(submission_id: str, pdf_path: str):
         job["status"] = "processing"
         job["progress"] = "Starting multi-agent pipeline..."
         
+        logger.info(f"Processing submission {submission_id}...")
+        
         # Run the LangGraph pipeline
         result = await run_underwriting_pipeline(
             pdf_path=pdf_path,
             submission_id=submission_id
         )
         
+        # Normalize the result
+        normalized_result = normalize_result(result)
+        
         # Update job with results
         job["status"] = "completed"
         job["progress"] = "Processing complete"
         job["completed_at"] = datetime.now().isoformat()
-        job["result"] = result
+        job["result"] = normalized_result
         
         logger.info(f"✅ Submission {submission_id} processed successfully")
+        logger.info(f"Result keys: {list(normalized_result.keys()) if isinstance(normalized_result, dict) else 'Not a dict'}")
         
     except Exception as e:
         job["status"] = "failed"
@@ -289,19 +423,27 @@ async def process_submission(submission_id: str, pdf_path: str):
 # STARTUP/SHUTDOWN
 # ═══════════════════════════════════════════════════════════════
 
-@asynccontextmanager
-async def startup():
+@app.on_event("startup")
+async def startup_event():
     """Verify MCP servers on startup"""
     logger.info("🚀 Starting Underwriting Assistant API...")
-    status = await mcp_manager.verify_servers()
     
-    for server, info in status.items():
-        logger.info(f"  {server}: {info['status']}")
+    # Add CORS headers to all responses
+    logger.info("CORS middleware enabled")
     
-    if all("✅" in info["status"] for info in status.values()):
-        logger.info("✅ All MCP servers connected")
-    else:
-        logger.warning("⚠️ Some MCP servers may not be available")
+    try:
+        status = await mcp_manager.verify_servers()
+        for server, info in status.items():
+            server_status = safe_extract(info, {})
+            status_text = server_status.get("status", "unknown") if isinstance(server_status, dict) else str(server_status)
+            logger.info(f"  {server}: {status_text}")
+        
+        if all("✅" in str(safe_dict_get(info, "status", "")) for info in status.values()):
+            logger.info("✅ All MCP servers connected")
+        else:
+            logger.warning("⚠️ Some MCP servers may not be available")
+    except Exception as e:
+        logger.warning(f"Could not verify MCP servers: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
