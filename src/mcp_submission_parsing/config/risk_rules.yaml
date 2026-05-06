@@ -1,0 +1,202 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# RISK RULES CONFIGURATION
+# Each rule has: id, name, severity, conditions, and action_on_fail
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rules:
+  # ── CRITICAL ──────────────────────────────────────────────────────────────
+  - rule_id: "R001"
+    name: "Policy Must Be Active"
+    description: "Policy status must be Active at time of incident"
+    severity: "CRITICAL"
+    conditions:
+      - field: "verification.is_active"
+        operator: "eq"
+        value: true
+    action_on_fail: "DENY"
+    fail_message: "Policy status is '{verification.policy_status}' — not Active"
+
+  - rule_id: "R002"
+    name: "Incident Within Policy Period"
+    description: "Incident date must fall between effective and expiration dates"
+    severity: "CRITICAL"
+    conditions:
+      - field: "verification.incident_in_policy_period"
+        operator: "eq"
+        value: true
+    action_on_fail: "DENY"
+    fail_message: "Incident date {parsed.incident_date} is outside policy period ({verification.effective_date} to {verification.expiration_date})"
+
+  # ── HIGH ──────────────────────────────────────────────────────────────────
+  - rule_id: "R003"
+    name: "Coverage Type Match"
+    description: "Incident type must be covered by policy coverage code"
+    severity: "HIGH"
+    conditions:
+      - field: "verification.errors"
+        operator: "not_contains"
+        value: "requires"
+        subfield: "coverage"
+    action_on_fail: "DENY"
+    fail_message: "Coverage mismatch detected in verification errors"
+
+  - rule_id: "R004"
+    name: "Claim Within Coverage Limit"
+    description: "Claim amount must not exceed coverage limit"
+    severity: "HIGH"
+    conditions:
+      - field: "parsed.total_claim_amount"
+        operator: "lte"
+        value_field: "verification.coverage_limit"
+    action_on_fail: "REFER_TO_ADJUSTER"
+    fail_message: "Claim ${parsed.total_claim_amount} exceeds coverage limit ${verification.coverage_limit}"
+
+  # ── MEDIUM ────────────────────────────────────────────────────────────────
+  - rule_id: "R005"
+    name: "Not Within 30 Days of Policy Start"
+    description: "Claims filed within 30 days of policy start may indicate adverse selection"
+    severity: "MEDIUM"
+    conditions:
+      - field: "parsed.incident_date"
+        operator: "days_after"
+        value_field: "verification.effective_date"
+        threshold: 30
+    action_on_fail: "INVESTIGATE"
+    fail_message: "Claim filed {days_diff} days after policy start — potential adverse selection"
+
+  - rule_id: "R006"
+    name: "Not Within 30 Days of Policy End"
+    description: "Claims near policy expiration are higher risk"
+    severity: "MEDIUM"
+    conditions:
+      - field: "parsed.incident_date"
+        operator: "days_before"
+        value_field: "verification.expiration_date"
+        threshold: 30
+    action_on_fail: "INVESTIGATE"
+    fail_message: "Claim filed {days_diff} days before policy expiration"
+
+  - rule_id: "R007"
+    name: "Claim Amount Under Threshold"
+    description: "Claims over $25,000 require extra scrutiny"
+    severity: "MEDIUM"
+    conditions:
+      - field: "parsed.total_claim_amount"
+        operator: "lte"
+        value: 25000
+    action_on_fail: "INVESTIGATE"
+    fail_message: "Claim amount ${parsed.total_claim_amount} exceeds $25,000 threshold"
+
+  - rule_id: "R008"
+    name: "Claims Frequency Acceptable"
+    description: "More than 2 prior claims indicates elevated risk"
+    severity: "MEDIUM"
+    conditions:
+      - field: "verification.prior_claims"
+        operator: "lte"
+        value: 2
+    action_on_fail: "INVESTIGATE"
+    fail_message: "Customer has {verification.prior_claims} prior claims on this policy"
+
+  - rule_id: "R010"
+    name: "Police Report for Significant Claims"
+    description: "Claims over $5,000 should have a police report"
+    severity: "MEDIUM"
+    conditions:
+      - all:
+          - field: "parsed.total_claim_amount"
+            operator: "gt"
+            value: 5000
+          - field: "parsed.police_report_available"
+            operator: "eq"
+            value: "YES"
+    action_on_fail: "INVESTIGATE"
+    fail_message: "Claim of ${parsed.total_claim_amount} has no police report"
+
+  - rule_id: "R014"
+    name: "Not Late-Night Incident"
+    description: "Incidents between 11 PM and 5 AM have elevated fraud risk"
+    severity: "MEDIUM"
+    conditions:
+      - field: "parsed.incident_hour_of_the_day"
+        operator: "not_between"
+        low: 23
+        high: 5
+    action_on_fail: "INVESTIGATE"
+    fail_message: "Incident occurred at {parsed.incident_hour_of_the_day}:00 — elevated fraud risk for late-night claims"
+
+  # ── LOW ───────────────────────────────────────────────────────────────────
+  - rule_id: "R009"
+    name: "Vehicle Make Matches Policy"
+    description: "Vehicle make in claim should match policy"
+    severity: "LOW"
+    conditions:
+      - field: "verification.warnings"
+        operator: "not_contains"
+        value: "vehicle make"
+    action_on_fail: "VERIFY"
+    fail_message: "Vehicle make in claim does not match policy"
+
+  - rule_id: "R011"
+    name: "Not Single Vehicle Without Witnesses"
+    description: "Single vehicle incidents with no witnesses are flagged"
+    severity: "LOW"
+    conditions:
+      - any:
+          - field: "parsed.number_of_vehicles_involved"
+            operator: "gt"
+            value: 1
+          - field: "parsed.witnesses"
+            operator: "gt"
+            value: 0
+          - field: "parsed.incident_type"
+            operator: "not_contains"
+            value: "Single"
+    action_on_fail: "NOTE"
+    fail_message: "Single vehicle incident with no witnesses"
+
+  - rule_id: "R012"
+    name: "Claim Above Deductible"
+    description: "Claim should exceed deductible to be payable"
+    severity: "LOW"
+    conditions:
+      - field: "parsed.total_claim_amount"
+        operator: "gte"
+        value_field: "verification.deductible"
+    action_on_fail: "NOTE"
+    fail_message: "Claim ${parsed.total_claim_amount} is below deductible ${verification.deductible}"
+
+  - rule_id: "R013"
+    name: "Not Weekend Incident"
+    description: "Weekend incidents flagged for pattern analysis"
+    severity: "LOW"
+    conditions:
+      - field: "parsed.incident_date"
+        operator: "is_weekday"
+    action_on_fail: "NOTE"
+    fail_message: "Incident occurred on a {day_of_week}"
+  
+  - rule_id: "R015"
+    name: "Customer Lifetime Claims Acceptable"
+    description: "Customers with 5+ total claims across all policies need review"
+    severity: "MEDIUM"
+    conditions:
+      - field: "verification.warnings"
+        operator: "not_contains"
+        value: "total claims across all policies"
+    action_on_fail: "INVESTIGATE"
+    fail_message: "Customer has high lifetime claims — see verification warnings"
+
+# ── Severity weights for risk score calculation ──────────────────────────────
+severity_weights:
+  CRITICAL: 0.40
+  HIGH: 0.30
+  MEDIUM: 0.15
+  LOW: 0.07
+
+# ── Thresholds for decisions ─────────────────────────────────────────────────
+thresholds:
+  siu_referral: 0.60        # Risk score >= this → SIU review
+  adjuster_referral: 0.30   # Risk score >= this → adjuster review
+  auto_approve: 0.10        # Risk score <= this AND no HIGH/CRITICAL → auto-approve
+  auto_deny: 0.70           # Risk score >= this → auto-deny
