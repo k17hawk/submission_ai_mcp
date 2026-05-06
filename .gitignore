@@ -219,3 +219,4 @@ __marimo__/
 dataset/
 *.pdf
 *.xlsx
+*.xlsx#

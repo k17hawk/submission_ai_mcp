@@ -1,0 +1,239 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Submission Parser — Field Definitions & Extraction Rules
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Regex Patterns ────────────────────────────────────────────────────────────
+patterns:
+  policy_number:
+    - '(?:policy\s*(?:number|#|ref|reference)?\s*[:#]?\s*)?(POL-\d{6})'
+    - 'POL-\d{6}'
+  
+  incident_date:
+    - '(?:incident|accident|loss|claim)?\s*(?:date)?\s*[:#]?\s*(\d{4}-\d{2}-\d{2})'
+    - '(?:incident|accident|loss)\s*(?:date)?\s*[:#]?\s*(\d{1,2}/\d{1,2}/\d{4})'
+  
+  year_make_model:
+    - '(\d{4})\s+(Toyota|Honda|Ford|Chevrolet|BMW|Nissan|Jeep|Dodge|Hyundai|Kia)\s+([A-Za-z0-9\-]+)'
+  
+  incident_type:
+    - '(?:incident|accident|collision|claim)\s*(?:type|description)?\s*[:#]?\s*(Single Vehicle Collision|Multi-vehicle Collision|Parked Car|Vehicle Theft|Other)'
+    - '\b(Single Vehicle Collision|Multi-vehicle Collision|Parked Car|Vehicle Theft|Other)\b'
+
+  incident_severity:
+    - '(?:damage|severity)\s*(?:assessed\s*as|level)?\s*[:#]?\s*(Minor Damage|Major Damage|Total Loss|Trivial Damage)'
+    - '\b(Minor Damage|Major Damage|Total Loss|Trivial Damage)\b'
+  
+  incident_location:
+    - '(?:location|place|at)\s*[:#]?\s*(Highway|Parking Lot|Local Road|Interstate|Residential Street)'
+  
+  city_state:
+    - '(?:in|at)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s*[,]\s*([A-Z]{2})'
+  
+  auto_year:
+    - '(?:vehicle|car|auto)\s*(?:year|model\s*year)?\s*[:#]?\s*(\d{4})'
+  
+  make_model:
+    - '(Toyota|Honda|Ford|Chevrolet|BMW|Nissan|Jeep|Dodge|Hyundai|Kia)\s+([A-Z][a-z]+(?:\s?-?[A-Z]?\d+)?)'
+  
+  authorities_contacted:
+    - '(?:authorities|contacted|called)\s*[:#]?\s*(Police|Fire|Ambulance|None|Other)'
+  
+  collision_type:
+    - '(?:collision|impact)\s*(?:type)?\s*[:#]?\s*(Front Collision|Rear Collision|Side Collision)'
+  
+  number_of_vehicles:
+    - '(?:number\s*of\s*vehicles|vehicles\s*involved)\s*[:#]?\s*(\d+)'
+  
+  bodily_injuries:
+    - '(?:bodily\s*injuries|injuries|people\s*hurt)\s*[:#]?\s*(\d+)'
+  
+  witnesses:
+    - '(?:witnesses|witness)\s*[:#]?\s*(\d+)'
+  
+  police_report:
+    - '(?:police\s*report)\s*(?:available|filed)?\s*[:#]?\s*(YES|NO|Yes|No|Y|N)'
+    - '(?:police\s*report)\s*(filed|available|submitted)'
+  
+  property_damage:
+    - '(?:property\s*damage)\s*[:#]?\s*(YES|NO|Yes|No|Y|N|\?)'
+  
+  total_claim_amount:
+    - '(?:total\s*claim\s*amount|claim\s*amount|amount)\s*[:#]?\s*\$?([\d,]+\.?\d*)'
+  
+  incident_hour:
+    - '(?:time|hour|at)\s*[:#]?\s*(\d{1,2})(?:\s*)?(?:AM|PM|am|pm)?'
+
+# ── Auto Makes (valid values) ─────────────────────────────────────────────────
+auto_makes:
+  - "Toyota"
+  - "Honda"
+  - "Ford"
+  - "Chevrolet"
+  - "BMW"
+  - "Nissan"
+  - "Jeep"
+  - "Dodge"
+  - "Hyundai"
+  - "Kia"
+
+# ── Valid Categorical Values ──────────────────────────────────────────────────
+valid_values:
+  incident_type:
+    - "Single Vehicle Collision"
+    - "Multi-vehicle Collision"
+    - "Parked Car"
+    - "Vehicle Theft"
+    - "Other"
+  
+  incident_severity:
+    - "Minor Damage"
+    - "Major Damage"
+    - "Total Loss"
+    - "Trivial Damage"
+  
+  incident_location:
+    - "Highway"
+    - "Parking Lot"
+    - "Local Road"
+    - "Interstate"
+    - "Residential Street"
+  
+  authorities_contacted:
+    - "Police"
+    - "Fire"
+    - "Ambulance"
+    - "None"
+    - "Other"
+  
+  collision_type:
+    - "Front Collision"
+    - "Rear Collision"
+    - "Side Collision"
+    - "?"
+
+  incident_state:
+  - "NY"
+  - "CA"
+  - "TX"
+  - "FL"
+  - "IL"
+  - "PA"
+  - "OH"
+  - "GA"
+  - "NC"
+  - "MI"
+  - "NJ"
+  - "VA"
+  - "WA"
+  - "AZ"
+  - "MA"
+
+# ── Synonym Mappings (raw text → canonical value) ─────────────────────────────
+mappings:
+  incident_type:
+    "single vehicle": "Single Vehicle Collision"
+    "single car": "Single Vehicle Collision"
+    "solo": "Single Vehicle Collision"
+    "multi vehicle": "Multi-vehicle Collision"
+    "multi-vehicle": "Multi-vehicle Collision"
+    "multiple vehicles": "Multi-vehicle Collision"
+    "multi car": "Multi-vehicle Collision"
+    "pileup": "Multi-vehicle Collision"
+    "parked": "Parked Car"
+    "parked car": "Parked Car"
+    "hit while parked": "Parked Car"
+    "theft": "Vehicle Theft"
+    "stolen": "Vehicle Theft"
+    "car stolen": "Vehicle Theft"
+    "auto theft": "Vehicle Theft"
+    "vandalism": "Other"
+    "fire": "Other"
+    "flood": "Other"
+    "hail": "Other"
+  
+  incident_severity:
+    "minor": "Minor Damage"
+    "small": "Trivial Damage"
+    "trivial": "Trivial Damage"
+    "scratch": "Trivial Damage"
+    "dent": "Minor Damage"
+    "major": "Major Damage"
+    "severe": "Major Damage"
+    "significant": "Major Damage"
+    "extensive": "Major Damage"
+    "total loss": "Total Loss"
+    "totaled": "Total Loss"
+    "totalled": "Total Loss"
+    "write-off": "Total Loss"
+    "destroyed": "Total Loss"
+  
+  incident_location:
+    "highway": "Highway"
+    "freeway": "Highway"
+    "expressway": "Highway"
+    "parking lot": "Parking Lot"
+    "parking garage": "Parking Lot"
+    "garage": "Parking Lot"
+    "parked": "Parking Lot"
+    "local road": "Local Road"
+    "street": "Local Road"
+    "avenue": "Local Road"
+    "interstate": "Interstate"
+    "i-": "Interstate"
+    "residential": "Residential Street"
+    "neighborhood": "Residential Street"
+    "driveway": "Residential Street"
+  
+  authorities_contacted:
+    "police": "Police"
+    "cop": "Police"
+    "police department": "Police"
+    "highway patrol": "Police"
+    "state trooper": "Police"
+    "fire": "Fire"
+    "fire department": "Fire"
+    "ambulance": "Ambulance"
+    "ems": "Ambulance"
+    "paramedics": "Ambulance"
+    "emergency": "Ambulance"
+    "none": "None"
+    "no one": "None"
+    "nobody": "None"
+  
+  collision_type:
+    "front": "Front Collision"
+    "head-on": "Front Collision"
+    "head on": "Front Collision"
+    "rear": "Rear Collision"
+    "rear-end": "Rear Collision"
+    "rear end": "Rear Collision"
+    "rear ended": "Rear Collision"
+    "side": "Side Collision"
+    "side-impact": "Side Collision"
+    "t-bone": "Side Collision"
+    "broadside": "Side Collision"
+    "sideswipe": "Side Collision"
+
+# ── Required vs Optional Fields ───────────────────────────────────────────────
+required_fields:
+  - policy_number
+  - incident_date
+  - incident_type
+  - auto_make
+
+optional_fields:
+  - incident_severity
+  - incident_location
+  - incident_city
+  - incident_state
+  - auto_model
+  - auto_year
+  - authorities_contacted
+  - collision_type
+  - number_of_vehicles_involved
+  - bodily_injuries
+  - witnesses
+  - police_report_available
+  - property_damage
+  - total_claim_amount
+  - incident_hour_of_the_day
