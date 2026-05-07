@@ -103,9 +103,9 @@ rules:
     description: "Claims over $5,000 should have a police report"
     severity: "MEDIUM"
     conditions:
-      - all:
+      - any:
           - field: "parsed.total_claim_amount"
-            operator: "gt"
+            operator: "lte"
             value: 5000
           - field: "parsed.police_report_available"
             operator: "eq"
@@ -175,7 +175,7 @@ rules:
         operator: "is_weekday"
     action_on_fail: "NOTE"
     fail_message: "Incident occurred on a {day_of_week}"
-  
+
   - rule_id: "R015"
     name: "Customer Lifetime Claims Acceptable"
     description: "Customers with 5+ total claims across all policies need review"
@@ -196,7 +196,7 @@ severity_weights:
 
 # ── Thresholds for decisions ─────────────────────────────────────────────────
 thresholds:
-  siu_referral: 0.60        # Risk score >= this → SIU review
+  siu_referral: 0.60        
   adjuster_referral: 0.30   # Risk score >= this → adjuster review
   auto_approve: 0.10        # Risk score <= this AND no HIGH/CRITICAL → auto-approve
   auto_deny: 0.70           # Risk score >= this → auto-deny

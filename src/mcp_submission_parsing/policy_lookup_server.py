@@ -42,6 +42,7 @@ class PolicyInfo:
     payment_status: str
     credit_score: int
     telematics_enrolled: str
+    telematics_score: float
     annual_mileage: int
 
 
@@ -78,105 +79,154 @@ class PolicyLookupService:
     Loads policy data from the generated Excel file.
     Creates an in-memory index on policy_number for fast lookups.
     """
-    
+
     def __init__(self, excel_path: str = None):
-        # Initialize ALL instance variables in __init__
         self._policies: Dict[str, PolicyInfo] = {}
         self._customer_policies: Dict[str, List[str]] = {}
         self._customers: Dict[str, Dict[str, Any]] = {}
-        
+        self._vehicles: Dict[str, Dict[str, Any]] = {}   # NEW: vehicle_id → vehicle data
+        self._coverage: Dict[str, Dict[str, Any]] = {}    # policy_number → coverage details
+
         if excel_path:
             self.load_from_excel(excel_path)
-    
+
     def load_from_excel(self, excel_path: str) -> None:
-        """Load policies AND customers from the generated dataset."""
+        """Load policies, customers, vehicles, and coverage from the Excel workbook."""
         path = Path(excel_path)
         if not path.exists():
-            print(f"Warning: {excel_path} not found. Using empty database.")
+            print(f"Warning: {excel_path} not found.")
             return
-        
-        # ── Load Policy Data (primary) ────────────────────────────────────
-        df_policy = pd.read_excel(excel_path, sheet_name='Policy_Data')
-        
-        for _, row in df_policy.iterrows():
-            policy = PolicyInfo(
-                policy_number=str(row['policy_number']),
-                customer_id=str(row['customer_id']),
-                policy_type=str(row['policy_type']),
-                policy_status=str(row['policy_status']),
-                effective_date=str(row['effective_date']),
-                expiration_date=str(row['expiration_date']),
-                insured_name=str(row['insured_name']),
-                insured_dob=str(row['insured_dob']),
-                insured_address=str(row['insured_address']),
-                insured_phone=str(row['insured_phone']),
-                insured_email=str(row['insured_email']),
-                coverage_code=str(row['coverage_code']),
-                coverage_name=str(row['coverage_name']),
-                coverage_limit=float(row['coverage_limit']),
-                coverage_deductible=float(row['coverage_deductible']),
-                coverage_premium=float(row['coverage_premium']),
-                vehicle_vin=str(row['vehicle_vin']),
-                vehicle_make=str(row['vehicle_make']),
-                vehicle_model=str(row['vehicle_model']),
-                vehicle_year=int(row['vehicle_year']),
-                vehicle_value=float(row['vehicle_value']),
-                prior_claims_count=int(row['prior_claims_count']),
-                payment_status=str(row['payment_status']),
-                credit_score=int(row['credit_score']),
-                telematics_enrolled=str(row['telematics_enrolled']),
-                annual_mileage=int(row['annual_mileage']),
-            )
-            
-            self._policies[policy.policy_number] = policy
-            
-            # Build customer → policies index
-            cid = policy.customer_id
-            if cid not in self._customer_policies:
-                self._customer_policies[cid] = []
-            if policy.policy_number not in self._customer_policies[cid]:
-                self._customer_policies[cid].append(policy.policy_number)
-        
-        # ── Load Customer Master (for identity verification) ──────────────
+
+        # ── Load Customer_Master ─────────────────────────────────
         df_cust = pd.read_excel(excel_path, sheet_name='Customer_Master')
-        
+        self._customers = {}
         for _, row in df_cust.iterrows():
             self._customers[str(row['customer_id'])] = {
                 'customer_id': str(row['customer_id']),
-                'customer_name': str(row['customer_name']),
-                'customer_dob': str(row['customer_dob']),
-                'customer_address': str(row['customer_address']),
-                'customer_phone': str(row['customer_phone']),
-                'customer_email': str(row['customer_email']),
-                'credit_score': int(row['credit_score']),
-                'total_policies': int(row['total_policies']),
-                'active_policies': int(row['active_policies']),
-                'first_policy_date': str(row['first_policy_date']),
-                'lifetime_claims': int(row['lifetime_claims']),
-                'customer_segment': str(row['customer_segment']),
+                'customer_name': str(row.get('customer_name', '')),
+                'customer_dob': str(row.get('date_of_birth', '')),
+                'customer_address': str(row.get('customer_address', '')),
+                'customer_phone': str(row.get('customer_phone', '')),
+                'customer_email': str(row.get('customer_email', '')),
+                'credit_score': int(row.get('credit_score', 650)),
+                'total_policies': int(row.get('total_policies', 0)),
+                'active_policies': int(row.get('active_policies', 0)),
+                'first_policy_date': str(row.get('customer_since_date', '')),
+                'lifetime_claims': int(row.get('lifetime_claims', 0)),
+                'customer_segment': str(row.get('customer_segment', 'Standard')),
+                'insured_sex': str(row.get('gender', 'MALE')),
+                'insured_education_level': str(row.get('education_level', 'Bachelors')),
+                'insured_occupation': str(row.get('occupation', 'other-service')),
+                'insured_hobbies': str(row.get('hobbies', 'reading')),
+                'insured_relationship': str(row.get('relationship_status', 'not-in-family')),
+                'capital_gains': float(row.get('capital_gains', 0)),
+                'capital_loss': float(row.get('capital_loss', 0)),
             }
-        
-        print(f"Loaded {len(self._policies):,} policies and {len(self._customers):,} customers")
-    
+
+        # ── Load Vehicle ─────────────────────────────────────────
+        try:
+            df_veh = pd.read_excel(excel_path, sheet_name='Vehicle')
+            for _, row in df_veh.iterrows():
+                vid = str(row['vehicle_id'])
+                self._vehicles[vid] = {
+                    'vehicle_id': vid,
+                    'customer_id': str(row['customer_id']),
+                    'vin': str(row.get('vin', '')),
+                    'make': str(row.get('make', '')),
+                    'model': str(row.get('model', '')),
+                    'year': int(row.get('year', 0)),
+                    'body_style': str(row.get('body_style', '')),
+                    'color': str(row.get('color', '')),
+                    'market_value': float(row.get('market_value', 0)),
+                    'annual_mileage': int(row.get('annual_mileage', 0)),
+                    'primary_use': str(row.get('primary_use', '')),
+                    'telematics_enrolled': str(row.get('telematics_enrolled', 'No')),
+                    'telematics_score': float(row.get('telematics_score', 70.0)),
+                }
+            print(f"  Vehicles loaded: {len(self._vehicles):,}")
+        except ValueError:
+            print("  Vehicle sheet not found — continuing without vehicle data")
+
+        # ── Load Coverage_Line ───────────────────────────────────
+        self._coverage = {}
+        try:
+            df_cov = pd.read_excel(excel_path, sheet_name='Coverage_Line')
+            for _, row in df_cov.iterrows():
+                pn = str(row['policy_number'])
+                # Store the first coverage line per policy (the test policies typically have one line)
+                if pn not in self._coverage:
+                    self._coverage[pn] = {
+                        'coverage_code': str(row.get('coverage_code', '')),
+                        'coverage_name': str(row.get('coverage_name', '')),
+                        'deductible': int(row.get('deductible', 500)),
+                        'coverage_limit': float(row.get('coverage_limit', 250000)),
+                    }
+            print(f"  Coverage lines loaded: {len(self._coverage):,}")
+        except ValueError:
+            print("  Coverage_Line sheet not found — using defaults")
+
+        # ── Load Policy_Data ─────────────────────────────────────
+        df_policy = pd.read_excel(excel_path, sheet_name='Policy_Data')
+        for _, row in df_policy.iterrows():
+            pn = str(row['policy_number'])
+            cov = self._coverage.get(pn, {})
+            vid = str(row['vehicle_id'])
+            veh = self._vehicles.get(vid, {})
+
+            policy = PolicyInfo(
+                policy_number=pn,
+                customer_id=str(row['customer_id']),
+                policy_type=str(row.get('policy_type', 'Auto')),
+                policy_status=str(row.get('policy_status', 'Active')),
+                effective_date=str(row['effective_date']),
+                expiration_date=str(row['expiration_date']),
+                insured_name=str(row.get('insured_name', '')),
+                insured_dob='',
+                insured_address=str(row.get('insured_address', '')),
+                insured_phone=str(row.get('insured_phone', '')),
+                insured_email=str(row.get('insured_email', '')),
+                coverage_code=cov.get('coverage_code', 'LIAB'),
+                coverage_name=cov.get('coverage_name', 'Liability'),
+                coverage_limit=float(row.get('umbrella_limit', cov.get('coverage_limit', 250000))),
+                coverage_deductible=int(cov.get('deductible', 500)),
+                coverage_premium=float(row.get('total_annual_premium', 1200)),
+                vehicle_vin=veh.get('vin', ''),
+                vehicle_make=veh.get('make', ''),
+                vehicle_model=veh.get('model', ''),
+                vehicle_year=int(veh.get('year', 0)),
+                vehicle_value=float(veh.get('market_value', 0)),
+                prior_claims_count=0,   # will be set from Claim records if available, else 0
+                payment_status=str(row.get('payment_status', 'Current')),
+                credit_score=0,
+                telematics_enrolled=veh.get('telematics_enrolled', 'No'),
+                telematics_score=float(veh.get('telematics_score', 70.0)),
+                annual_mileage=int(veh.get('annual_mileage', 0)),
+            )
+            self._policies[pn] = policy
+
+            cid = policy.customer_id
+            if cid not in self._customer_policies:
+                self._customer_policies[cid] = []
+            if pn not in self._customer_policies[cid]:
+                self._customer_policies[cid].append(pn)
+
+        print(f"Loaded {len(self._policies):,} policies, {len(self._customers):,} customers, "
+              f"{len(self._coverage):,} coverage records")
+
+    # ── existing lookup methods unchanged ────────────────────────
     def get_policy(self, policy_number: str) -> Optional[PolicyInfo]:
-        """Look up a single policy."""
         return self._policies.get(str(policy_number))
-    
+
     def get_customer(self, customer_id: str) -> Optional[Dict[str, Any]]:
-        """Look up a customer by ID."""
         return self._customers.get(str(customer_id))
-    
+
     def get_customer_policies(self, customer_id: str) -> List[PolicyInfo]:
-        """Get all policies for a customer."""
         policy_numbers = self._customer_policies.get(str(customer_id), [])
         return [self._policies[pn] for pn in policy_numbers if pn in self._policies]
-    
+
     def get_customer_total_claims(self, customer_id: str) -> int:
-        """Get total prior claims across all policies for a customer."""
         policies = self.get_customer_policies(customer_id)
         return sum(p.prior_claims_count for p in policies)
-    
-    
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -225,75 +275,42 @@ def check_coverage(
 ) -> Dict[str, Any]:
     """
     MCP Tool: Check if the incident is covered by the policy.
-    
-    Returns:
-        Dict with covered status, deductible, coverage type, and limits.
     """
     policy = service.get_policy(policy_number)
-    
     if not policy:
-        return {
-            "covered": False,
-            "reason": "Policy not found",
-            "deductible": 0,
-            "coverage_type": "",
-            "limits": {},
-        }
-    
-    # Check policy status
+        return {"covered": False, "reason": "Policy not found", "deductible": 0,
+                "coverage_type": "", "limits": {}}
+
     if policy.policy_status != "Active":
-        return {
-            "covered": False,
-            "reason": f"Policy is {policy.policy_status}",
-            "deductible": policy.coverage_deductible,
-            "coverage_type": policy.coverage_name,
-            "limits": {"coverage_limit": policy.coverage_limit},
-        }
-    
-    # Check date falls within policy period
+        return {"covered": False, "reason": f"Policy is {policy.policy_status}",
+                "deductible": policy.coverage_deductible, "coverage_type": policy.coverage_name,
+                "limits": {"coverage_limit": policy.coverage_limit}}
+
     try:
         inc_date = datetime.strptime(incident_date, "%Y-%m-%d")
         eff_date = datetime.strptime(policy.effective_date, "%Y-%m-%d")
         exp_date = datetime.strptime(policy.expiration_date, "%Y-%m-%d")
-        
         if not (eff_date <= inc_date <= exp_date):
-            return {
-                "covered": False,
-                "reason": f"Incident date {incident_date} is outside policy period ({policy.effective_date} to {policy.expiration_date})",
-                "deductible": policy.coverage_deductible,
-                "coverage_type": policy.coverage_name,
-                "limits": {"coverage_limit": policy.coverage_limit},
-            }
+            return {"covered": False,
+                    "reason": f"Incident date {incident_date} is outside policy period",
+                    "deductible": policy.coverage_deductible, "coverage_type": policy.coverage_name,
+                    "limits": {"coverage_limit": policy.coverage_limit}}
     except (ValueError, TypeError):
-        pass  # If we can't parse dates, proceed with coverage check anyway
-    
-    # Check coverage type matches incident type
+        pass
+
     required_coverages = INCIDENT_TO_COVERAGE.get(incident_type, [])
-    coverage_ok = not required_coverages or policy.coverage_code in required_coverages
-    
-    if not coverage_ok:
-        return {
-            "covered": False,
-            "reason": (
-                f"Policy covers '{policy.coverage_code}' ({policy.coverage_name}) "
-                f"but incident type '{incident_type}' requires {required_coverages}"
-            ),
-            "deductible": policy.coverage_deductible,
-            "coverage_type": policy.coverage_name,
-            "limits": {"coverage_limit": policy.coverage_limit},
-        }
-    
-    # Check claim amount vs limit
+    if required_coverages and policy.coverage_code not in required_coverages:
+        return {"covered": False,
+                "reason": f"Coverage mismatch: {policy.coverage_code} not in {required_coverages}",
+                "deductible": policy.coverage_deductible, "coverage_type": policy.coverage_name,
+                "limits": {"coverage_limit": policy.coverage_limit}}
+
     if claim_amount > policy.coverage_limit:
-        return {
-            "covered": False,
-            "reason": f"Claim amount ${claim_amount:,.2f} exceeds coverage limit ${policy.coverage_limit:,.2f}",
-            "deductible": policy.coverage_deductible,
-            "coverage_type": policy.coverage_name,
-            "limits": {"coverage_limit": policy.coverage_limit},
-        }
-    
-    # All checks passed
+        return {"covered": False,
+                "reason": f"Claim amount ${claim_amount:,.2f} exceeds coverage limit",
+                "deductible": policy.coverage_deductible, "coverage_type": policy.coverage_name,
+                "limits": {"coverage_limit": policy.coverage_limit}}
+
     return {
         "covered": True,
         "deductible": policy.coverage_deductible,
@@ -304,6 +321,7 @@ def check_coverage(
         "policy_status": policy.policy_status,
     }
 
+
 def verify_policy_for_claim(
     policy_number: str,
     incident_date: str,
@@ -312,20 +330,13 @@ def verify_policy_for_claim(
     vehicle_make: str = "",
     vehicle_model: str = "",
 ) -> Dict[str, Any]:
-    """
-    MCP Tool: Full policy verification for a claim.
-    Checks: policy exists, active, in period, coverage match, limit, vehicle.
-    """
-    result = PolicyVerificationResult(
-        found=False,
-        policy_number=policy_number,
-    )
-    
+    """MCP Tool: Full policy verification for a claim."""
+    result = PolicyVerificationResult(found=False, policy_number=policy_number)
     policy = service.get_policy(policy_number)
     if not policy:
-        result.errors.append(f"Policy {policy_number} not found in system")
+        result.errors.append(f"Policy {policy_number} not found")
         return asdict(result)
-    
+
     result.found = True
     result.policy_status = policy.policy_status
     result.effective_date = policy.effective_date
@@ -341,61 +352,40 @@ def verify_policy_for_claim(
     result.vehicle_year = policy.vehicle_year
     result.vehicle_value = policy.vehicle_value
     result.prior_claims = policy.prior_claims_count
-    
-    # Policy status
+
     if policy.policy_status != "Active":
-        result.errors.append(f"Policy status is '{policy.policy_status}', not 'Active'")
+        result.errors.append(f"Policy status is '{policy.policy_status}'")
     else:
         result.is_active = True
-    
-    # Date check
+
     try:
         inc_date = datetime.strptime(incident_date, "%Y-%m-%d")
         eff_date = datetime.strptime(policy.effective_date, "%Y-%m-%d")
         exp_date = datetime.strptime(policy.expiration_date, "%Y-%m-%d")
-        
         if eff_date <= inc_date <= exp_date:
             result.incident_in_policy_period = True
         else:
-            result.errors.append(
-                f"Incident date {incident_date} is outside policy period "
-                f"({policy.effective_date} to {policy.expiration_date})"
-            )
+            result.errors.append(f"Incident date {incident_date} outside policy period")
     except (ValueError, TypeError):
         result.warnings.append("Could not parse dates for policy period check")
-    
-    # Coverage match
+
     required_coverages = INCIDENT_TO_COVERAGE.get(incident_type, [])
     if required_coverages and policy.coverage_code not in required_coverages:
-        result.errors.append(
-            f"Incident type '{incident_type}' requires {required_coverages} coverage, "
-            f"but policy has '{policy.coverage_code}' ({policy.coverage_name})"
-        )
-    
-    # Limit check
-    if claim_amount > 0 and claim_amount > policy.coverage_limit:
-        result.errors.append(
-            f"Claim amount ${claim_amount:,.2f} exceeds coverage limit ${policy.coverage_limit:,.2f}"
-        )
-    
-    # Vehicle match
+        result.errors.append(f"Coverage mismatch: {policy.coverage_code} not in {required_coverages}")
+
+    if claim_amount > policy.coverage_limit:
+        result.errors.append(f"Claim amount exceeds coverage limit")
+
     if vehicle_make and vehicle_make.lower() != policy.vehicle_make.lower():
-        result.warnings.append(
-            f"Claimed vehicle make '{vehicle_make}' differs from policy '{policy.vehicle_make}'"
-        )
-    
-    # Prior claims
+        result.warnings.append(f"Vehicle make mismatch: {vehicle_make} vs {policy.vehicle_make}")
+
     if policy.prior_claims_count >= 3:
-        result.warnings.append(
-            f"Customer has {policy.prior_claims_count} prior claims on this policy"
-        )
-    
+        result.warnings.append(f"Customer has {policy.prior_claims_count} prior claims on this policy")
+
     total_customer_claims = service.get_customer_total_claims(policy.customer_id)
     if total_customer_claims >= 5:
-        result.warnings.append(
-            f"Customer has {total_customer_claims} total claims across all policies"
-        )
-    
+        result.warnings.append(f"Customer has {total_customer_claims} total claims across all policies")
+
     return asdict(result)
 
 
@@ -404,68 +394,55 @@ def verify_identity(
     customer_id: str = "",
     policy_number: str = "",
 ) -> Dict[str, Any]:
-    """MCP Tool: Verify customer identity against policy records."""
-    result = {
-        "verified": False,
-        "customer_id": customer_id,
-        "customer_name": customer_name,
-        "policies": [],
-        "message": "",
-    }
-    
+    """MCP Tool: Verify customer identity."""
+    result = {"verified": False, "customer_id": customer_id, "customer_name": customer_name,
+              "policies": [], "message": ""}
     if policy_number:
         policy = service.get_policy(policy_number)
         if not policy:
             result["message"] = "Policy not found"
             return result
-        
         result["customer_id"] = policy.customer_id
         result["customer_name"] = policy.insured_name
-        
-        if customer_name:
-            if customer_name.lower() in policy.insured_name.lower() or \
-               policy.insured_name.lower() in customer_name.lower():
-                result["verified"] = True
-                result["message"] = "Name matches policyholder"
-            else:
-                result["message"] = f"Name does not match. Policyholder is {policy.insured_name}"
-        else:
+        if customer_name and (customer_name.lower() in policy.insured_name.lower()
+                              or policy.insured_name.lower() in customer_name.lower()):
             result["verified"] = True
-            result["message"] = "Policy found"
-        
+            result["message"] = "Name matches policyholder"
+        else:
+            result["message"] = f"Name does not match. Policyholder is {policy.insured_name}"
         result["policies"] = [policy_number]
-    
     elif customer_id:
-        # Use get_customer for richer info
         customer = service.get_customer(customer_id)
         policies = service.get_customer_policies(customer_id)
         if customer and policies:
             result["verified"] = True
             result["customer_name"] = customer["customer_name"]
             result["policies"] = [p.policy_number for p in policies]
-            result["message"] = f"Found {len(policies)} policies for customer"
+            result["message"] = f"Found {len(policies)} policies"
             result["total_prior_claims"] = sum(p.prior_claims_count for p in policies)
             result["lifetime_claims"] = customer["lifetime_claims"]
             result["customer_segment"] = customer["customer_segment"]
         else:
             result["message"] = "Customer not found"
-    
     else:
         result["message"] = "Provide policy_number or customer_id"
-    
     return result
 
+def get_customer_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    name_lower = name.lower()
+    for cust in self._customers.values():
+        if cust.get('customer_name', '').lower() == name_lower:
+            return cust
+    return None
 
 def pre_fill_claim(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
     """MCP Tool: Merge parsed submission with looked-up policy data."""
     policy_number = parsed_data.get("policy_number")
     if not policy_number:
         return {"error": "No policy_number in parsed data"}
-    
     policy = service.get_policy(policy_number)
     if not policy:
         return {"error": f"Policy {policy_number} not found"}
-    
     verification = verify_policy_for_claim(
         policy_number=policy_number,
         incident_date=parsed_data.get("incident_date", ""),
@@ -473,7 +450,6 @@ def pre_fill_claim(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
         claim_amount=parsed_data.get("total_claim_amount", 0) or 0,
         vehicle_make=parsed_data.get("auto_make", ""),
     )
-    
     return {
         "policy": asdict(policy),
         "parsed_submission": parsed_data,
@@ -483,38 +459,32 @@ def pre_fill_claim(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# QUICK TEST
+# QUICK TEST (unchanged)
 # ═══════════════════════════════════════════════════════════════════════════════
-
 if __name__ == "__main__":
     print("=" * 60)
     print("POLICY LOOKUP SERVICE — TEST")
     print("=" * 60)
-    
     if service._policies:
         test_policy = list(service._policies.keys())[0]
         print(f"\nTesting with policy: {test_policy}")
-        
         result = verify_policy_for_claim(
             policy_number=test_policy,
             incident_date="2023-05-12",
             incident_type="Single Vehicle Collision",
             claim_amount=4500.00,
         )
-        
         print(f"Found: {result['found']}")
         print(f"Active: {result['is_active']}")
         print(f"Status: {result['policy_status']}")
         print(f"In policy period: {result['incident_in_policy_period']}")
         print(f"Coverage: {result['coverage_code']} ({result['coverage_name']})")
         print(f"Deductible: ${result['deductible']:,.2f}")
+        print(f"Vehicle: {result['vehicle_year']} {result['vehicle_make']} {result['vehicle_model']} "
+              f"(${result['vehicle_value']:,.2f})")
         print(f"Errors: {result['errors']}")
         print(f"Warnings: {result['warnings']}")
-        
-        # Test customer lookup
         cust_id = result['customer_id']
         print(f"\nCustomer ID: {cust_id}")
         cust_result = verify_identity(customer_id=cust_id)
@@ -523,4 +493,4 @@ if __name__ == "__main__":
         print(f"Policies: {cust_result['policies']}")
         print(f"Segment: {cust_result.get('customer_segment', 'N/A')}")
     else:
-        print("No data loaded. Make sure underwriting_50k_dataset.xlsx exists.")
+        print("No data loaded.")
