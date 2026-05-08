@@ -1,9 +1,9 @@
 # test_pipeline.py
 """
-Serial integration test: Agent 1 → Agent 2 → Agent 3 → Agent 4
+Serial integration test: Agent 1 → Agent 2 → Agent 3 → Agent 4 → Agent 5
 Picks a random active policy, generates a compatible claim,
-runs the full pipeline (including feature building for ML),
-and saves the generated features to CSV.
+runs the full pipeline (including fraud ML prediction),
+and saves the generated features + prediction to CSV.
 """
 
 import sys
@@ -24,6 +24,7 @@ from src.mcp_submission_parsing.policy_lookup_server import (
 )
 from src.mcp_submission_parsing.rule_checker_server import check_risk_rules
 from src.mcp_submission_parsing.feature_builder_server import build_feature_vector
+from src.mcp_submission_parsing.fraud_detection_server import predict_fraud
 
 import pandas as pd
 
@@ -101,7 +102,7 @@ inc_type = random.choice(compatible_types)
 severity = random.choice(["Minor Damage", "Major Damage"])
 claim_amount = generate_claim_amount(severity, policy.vehicle_value)
 
-# Build claim text (injects actual policy details)
+# Build claim text
 claim_text = (
     f"Hi, I need to file a claim. On {inc_date_str} I was involved in a "
     f"{inc_type} on Highway in Springfield, IL. "
@@ -178,7 +179,7 @@ if not presp["found"]:
 
 policy_data = presp.get("policy", {})
 
-# 3b. Verify identity – use name to find the correct customer record
+# 3b. Verify identity
 print("\n>>> verify_identity (by name)")
 iresp = verify_identity(
     customer_name=policy.insured_name,
@@ -186,7 +187,6 @@ iresp = verify_identity(
 )
 print(f"Verified: {iresp['verified']} — {iresp['message']}")
 
-# Use the customer_id from the identity check for accurate customer profile
 customer_id = iresp.get("customer_id") if iresp["verified"] else policy_data.get("customer_id")
 
 # 3c. Check coverage
@@ -255,7 +255,7 @@ print("\n" + "=" * 60)
 print("AGENT 4: Feature Builder (Fraud ML Input)")
 print("=" * 60)
 
-# Fetch customer profile using the ID obtained from identity verification
+# Fetch customer profile
 customer_profile = None
 if customer_id:
     customer_data = service.get_customer(customer_id)
@@ -273,7 +273,6 @@ if customer_id:
         print(f"  Hobbies: {customer_profile.get('insured_hobbies', 'N/A')}")
         print(f"  Relationship: {customer_profile.get('insured_relationship', 'N/A')}")
     else:
-        customer_profile = service.get_customer(customer_id) if customer_id else None
         print(f"\n⚠️  Customer {customer_id} not found in Customer_Master")
 
 feature_result = build_feature_vector(parsed, policy_data, verification, customer_profile)
@@ -287,17 +286,35 @@ print(f"Ready for ML: {feature_result['ready_for_ml']}")
 
 features = feature_result['features']
 
-# Verify the customer data flowed through
-print(f"\nDemographics verification:")
-print(f"  insured_sex: {features['insured_sex']} ← customer said: {customer_profile.get('insured_sex') if customer_profile else 'N/A'}")
-print(f"  insured_education_level: {features['insured_education_level']} ← customer said: {customer_profile.get('insured_education_level') if customer_profile else 'N/A'}")
-print(f"  insured_occupation: {features['insured_occupation']} ← customer said: {customer_profile.get('insured_occupation') if customer_profile else 'N/A'}")
-print(f"  months_as_customer: {features['months_as_customer']} (from customer profile)")
-print(f"  age: {features['age']} (from customer profile)")
+
+# ═══════════════════════════════════════════════════════════════
+# 6. AGENT 5: FRAUD DETECTION ML
+# ═══════════════════════════════════════════════════════════════
+
+print("\n" + "=" * 60)
+print("AGENT 5: Fraud Detection ML")
+print("=" * 60)
+
+try:
+    fraud_result = predict_fraud(features)
+    print(f"\nFraud Probability: {fraud_result['fraud_probability']:.4f}")
+    print(f"Fraud Flag:        {fraud_result['fraud_flag']}")
+    print(f"Risk Level:        {fraud_result['risk_level']}")
+    print(f"Threshold Used:    {fraud_result['threshold_used']:.4f}")
+    print(f"Requires SIU:      {fraud_result['requires_siu']}")
+except Exception as e:
+    print(f"\n❌ Fraud detection failed: {e}")
+    fraud_result = {
+        'fraud_probability': None,
+        'fraud_flag': 'ERROR',
+        'risk_level': 'UNKNOWN',
+        'threshold_used': None,
+        'requires_siu': False,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
-# 6. PIPELINE SUMMARY
+# 7. PIPELINE SUMMARY
 # ═══════════════════════════════════════════════════════════════
 
 print("\n" + "=" * 60)
@@ -318,14 +335,18 @@ print(f"  Agent 2 — Coverage: {'PASS' if cov.get('covered') else 'FAIL'}")
 print(f"  Agent 3 — Risk: {risk['risk_score']} ({risk['risk_level']}) → "
       f"{risk['auto_decision'] or 'MANUAL REVIEW'}")
 print(f"  Agent 4 — Features: {feature_result['feature_count']} columns ready for ML")
+print(f"  Agent 5 — Fraud ML: {fraud_result['fraud_flag']} "
+      f"(prob={fraud_result['fraud_probability']:.4f}, "
+      f"risk={fraud_result['risk_level']})")
 print(f"  ─────────────────────────────────────")
 print(f"  SIU Required: {'Yes' if risk['requires_siu'] else 'No'}")
 print(f"  Adjuster Required: {'Yes' if risk['requires_adjuster'] else 'No'}")
 print(f"  Imputed Fields: {feature_result['imputed_count']}/27")
-print("\n✅ Pipeline test completed — 4 agents executed successfully.")
+print("\n✅ Pipeline test completed — 5 agents executed successfully.")
+
 
 # ═══════════════════════════════════════════════════════════════
-# 7. EXPORT FEATURES TO CSV
+# 8. EXPORT FEATURES + PREDICTION TO CSV
 # ═══════════════════════════════════════════════════════════════
 
 prediction_dir = Path("prediction_folder")
@@ -333,22 +354,23 @@ prediction_dir.mkdir(exist_ok=True)
 
 features_file = prediction_dir / "features.csv"
 
-# Create a row with identifier columns + all 27 features
+# Add prediction details
 export_row = {
     "policy_number": parsed.get("policy_number"),
     "incident_date": parsed.get("incident_date"),
     "claim_amount": features.get("total_claim_amount"),
     "risk_score": risk["risk_score"],
     "risk_level": risk["risk_level"],
+    "fraud_probability": fraud_result["fraud_probability"],
+    "fraud_flag": fraud_result["fraud_flag"],
     **features
 }
 
 df = pd.DataFrame([export_row])
 
-# Append or create CSV
 if features_file.exists():
     df.to_csv(features_file, mode='a', header=False, index=False)
 else:
     df.to_csv(features_file, index=False)
 
-print(f"\n📁 Features saved to {features_file.absolute()}")
+print(f"\n📁 Features + prediction saved to {features_file.absolute()}")
