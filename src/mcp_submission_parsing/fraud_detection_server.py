@@ -1,19 +1,16 @@
 """
 MCP Server 5: Fraud Detection ML
 Loads the trained ensemble model and scores incoming claims.
-Uses the features built by Agent 4.
 """
 
 import pandas as pd
+import numpy as np
 import joblib
 from pathlib import Path
 from typing import Dict, Any
 
+MODEL_PATH = Path("/home/lang-chain/Documents/mcp_insurance/notebook/best_ensemble_fraud_model.pkl")
 
-# Path to your saved model
-MODEL_PATH = Path(__file__).parent.parent.parent / "notebook" / "best_ensemble_fraud_model.pkl"
-
-# Feature order must match exactly what the model was trained on
 FEATURE_COLUMNS = [
     'months_as_customer', 'age', 'insured_sex', 'insured_education_level',
     'insured_occupation', 'policy_deductable', 'umbrella_limit',
@@ -27,7 +24,6 @@ FEATURE_COLUMNS = [
     'is_complex_claim',
 ]
 
-# Load model once at module import
 _model = None
 _threshold = 0.5
 
@@ -44,40 +40,35 @@ def load_model():
 
 
 def predict_fraud(features: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    MCP Tool: Score a claim for fraud probability.
-    
-    Args:
-        features: 27-feature dict from Agent 4 (feature_builder_server)
-    
-    Returns:
-        fraud_probability, fraud_flag (Y/N), and risk level
-    """
-    model, threshold = load_model()
-    
-    # Convert to DataFrame with correct column order
-    X = pd.DataFrame([features])[FEATURE_COLUMNS]
-    
-    # Get probability
-    proba = model.predict_proba(X)[0, 1]
-    
-    # Apply threshold
-    flag = "Y" if proba >= threshold else "N"
-    
-    # Risk level
-    if proba >= 0.75:
-        risk = "HIGH"
-    elif proba >= threshold:
-        risk = "MEDIUM"
-    elif proba >= 0.25:
-        risk = "LOW"
-    else:
-        risk = "MINIMAL"
-    
-    return {
-        "fraud_probability": round(float(proba), 4),
-        "fraud_flag": flag,
-        "risk_level": risk,
-        "threshold_used": threshold,
-        "requires_siu": proba >= 0.65,
-    }
+    """MCP Tool: Score a claim for fraud probability. Guarantees no None."""
+    try:
+        model, threshold = load_model()
+        X = pd.DataFrame([features])[FEATURE_COLUMNS]
+        proba = float(model.predict_proba(X)[0, 1])
+        flag = "Y" if proba >= threshold else "N"
+        
+        if proba >= 0.75:
+            risk = "HIGH"
+        elif proba >= threshold:
+            risk = "MEDIUM"
+        elif proba >= 0.25:
+            risk = "LOW"
+        else:
+            risk = "MINIMAL"
+        
+        return {
+            "fraud_probability": round(proba, 4),
+            "fraud_flag": flag,
+            "risk_level": risk,
+            "threshold_used": threshold,
+            "requires_siu": proba >= 0.65,
+        }
+    except Exception as e:
+        return {
+            "fraud_probability": -1.0,
+            "fraud_flag": "ERROR",
+            "risk_level": "UNKNOWN",
+            "threshold_used": _threshold,
+            "requires_siu": False,
+            "error": str(e),
+        }
