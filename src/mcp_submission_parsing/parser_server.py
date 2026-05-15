@@ -59,7 +59,7 @@ class SubmissionParser:
         normalizer_config = get_normalizer_config()
         
         self.regex_extractor = RegexExtractor(patterns)
-        self.ner_extractor = SpacyNERExtractor("en_core_web_lg")
+        self.ner_extractor = SpacyNERExtractor("en_core_web_sm")
         self.normalizer = FieldNormalizer(normalizer_config)
     
     def parse(self, text: str, doc_type: str = "unknown") -> ParsedSubmission:
