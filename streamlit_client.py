@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from clients.cli_client import MCPInsuranceClient
+from src.mcp_submission_parsing.clients.cli_client import MCPInsuranceClient
 
 
 # Page config
