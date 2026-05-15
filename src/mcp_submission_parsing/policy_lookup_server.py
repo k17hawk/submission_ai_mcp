@@ -11,10 +11,6 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# DATA MODELS
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @dataclass
 class PolicyInfo:
     policy_number: str
@@ -28,11 +24,14 @@ class PolicyInfo:
     insured_address: str
     insured_phone: str
     insured_email: str
+    insured_state: str                     # <-- NEW
     coverage_code: str
     coverage_name: str
     coverage_limit: float
     coverage_deductible: float
-    coverage_premium: float
+    coverage_premium: float                # per‑line premium (from Coverage_Line)
+    total_annual_premium: float            # <-- NEW (from Policy_Data)
+    policy_csl: str                        # <-- NEW (combined single limit)
     vehicle_vin: str
     vehicle_make: str
     vehicle_model: str
@@ -44,6 +43,7 @@ class PolicyInfo:
     telematics_enrolled: str
     telematics_score: float
     annual_mileage: int
+    umbrella_limit: float                  # <-- NEW (from Policy_Data)
 
 
 @dataclass
@@ -84,8 +84,8 @@ class PolicyLookupService:
         self._policies: Dict[str, PolicyInfo] = {}
         self._customer_policies: Dict[str, List[str]] = {}
         self._customers: Dict[str, Dict[str, Any]] = {}
-        self._vehicles: Dict[str, Dict[str, Any]] = {}   # NEW: vehicle_id → vehicle data
-        self._coverage: Dict[str, Dict[str, Any]] = {}    # policy_number → coverage details
+        self._vehicles: Dict[str, Dict[str, Any]] = {}
+        self._coverage: Dict[str, Dict[str, Any]] = {}
 
         if excel_path:
             self.load_from_excel(excel_path)
@@ -153,14 +153,19 @@ class PolicyLookupService:
             df_cov = pd.read_excel(excel_path, sheet_name='Coverage_Line')
             for _, row in df_cov.iterrows():
                 pn = str(row['policy_number'])
-                # Store the first coverage line per policy (the test policies typically have one line)
+                # Store the first coverage line per policy (or aggregate)
                 if pn not in self._coverage:
                     self._coverage[pn] = {
                         'coverage_code': str(row.get('coverage_code', '')),
                         'coverage_name': str(row.get('coverage_name', '')),
                         'deductible': int(row.get('deductible', 500)),
                         'coverage_limit': float(row.get('coverage_limit', 250000)),
+                        'csl': str(row.get('csl', '100/300')),           # <-- policy_csl
+                        'premium_for_line': float(row.get('premium_for_line', 0)),
                     }
+                else:
+                    # If multiple lines, keep the first (simplification)
+                    pass
             print(f"  Coverage lines loaded: {len(self._coverage):,}")
         except ValueError:
             print("  Coverage_Line sheet not found — using defaults")
@@ -185,22 +190,26 @@ class PolicyLookupService:
                 insured_address=str(row.get('insured_address', '')),
                 insured_phone=str(row.get('insured_phone', '')),
                 insured_email=str(row.get('insured_email', '')),
+                insured_state=str(row.get('insured_state', 'CA')),          # <-- NEW
                 coverage_code=cov.get('coverage_code', 'LIAB'),
                 coverage_name=cov.get('coverage_name', 'Liability'),
-                coverage_limit=float(row.get('umbrella_limit', cov.get('coverage_limit', 250000))),
+                coverage_limit=float(cov.get('coverage_limit', 250000)),
                 coverage_deductible=int(cov.get('deductible', 500)),
-                coverage_premium=float(row.get('total_annual_premium', 1200)),
+                coverage_premium=float(cov.get('premium_for_line', 0)),
+                total_annual_premium=float(row.get('total_annual_premium', 1200)),  # <-- NEW
+                policy_csl=cov.get('csl', '100/300'),                             # <-- NEW
                 vehicle_vin=veh.get('vin', ''),
                 vehicle_make=veh.get('make', ''),
                 vehicle_model=veh.get('model', ''),
                 vehicle_year=int(veh.get('year', 0)),
                 vehicle_value=float(veh.get('market_value', 0)),
-                prior_claims_count=0,   # will be set from Claim records if available, else 0
+                prior_claims_count=0,
                 payment_status=str(row.get('payment_status', 'Current')),
                 credit_score=0,
                 telematics_enrolled=veh.get('telematics_enrolled', 'No'),
                 telematics_score=float(veh.get('telematics_score', 70.0)),
                 annual_mileage=int(veh.get('annual_mileage', 0)),
+                umbrella_limit=float(row.get('umbrella_limit', 0)),            # <-- NEW
             )
             self._policies[pn] = policy
 
@@ -213,7 +222,6 @@ class PolicyLookupService:
         print(f"Loaded {len(self._policies):,} policies, {len(self._customers):,} customers, "
               f"{len(self._coverage):,} coverage records")
 
-    # ── existing lookup methods unchanged ────────────────────────
     def get_policy(self, policy_number: str) -> Optional[PolicyInfo]:
         return self._policies.get(str(policy_number))
 
@@ -230,7 +238,7 @@ class PolicyLookupService:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# COVERAGE MAPPING
+# COVERAGE MAPPING (unchanged)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 INCIDENT_TO_COVERAGE = {
@@ -252,7 +260,7 @@ COVERAGE_DESCRIPTIONS = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MCP TOOLS
+# MCP TOOLS (only the ones used by the pipeline; keep existing)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 DATA_PATH = "/home/lang-chain/Documents/mcp_insurance/underwriting_50k_dataset.xlsx"
@@ -273,9 +281,7 @@ def check_coverage(
     incident_date: str,
     claim_amount: float = 0.0,
 ) -> Dict[str, Any]:
-    """
-    MCP Tool: Check if the incident is covered by the policy.
-    """
+    """MCP Tool: Check if the incident is covered by the policy."""
     policy = service.get_policy(policy_number)
     if not policy:
         return {"covered": False, "reason": "Policy not found", "deductible": 0,
@@ -428,12 +434,6 @@ def verify_identity(
         result["message"] = "Provide policy_number or customer_id"
     return result
 
-def get_customer_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-    name_lower = name.lower()
-    for cust in self._customers.values():
-        if cust.get('customer_name', '').lower() == name_lower:
-            return cust
-    return None
 
 def pre_fill_claim(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
     """MCP Tool: Merge parsed submission with looked-up policy data."""
@@ -457,40 +457,3 @@ def pre_fill_claim(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
         "status": "ready_for_risk_rules",
         "requires_manual_review": len(verification.get("errors", [])) > 0,
     }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# QUICK TEST (unchanged)
-# ═══════════════════════════════════════════════════════════════════════════════
-if __name__ == "__main__":
-    print("=" * 60)
-    print("POLICY LOOKUP SERVICE — TEST")
-    print("=" * 60)
-    if service._policies:
-        test_policy = list(service._policies.keys())[0]
-        print(f"\nTesting with policy: {test_policy}")
-        result = verify_policy_for_claim(
-            policy_number=test_policy,
-            incident_date="2023-05-12",
-            incident_type="Single Vehicle Collision",
-            claim_amount=4500.00,
-        )
-        print(f"Found: {result['found']}")
-        print(f"Active: {result['is_active']}")
-        print(f"Status: {result['policy_status']}")
-        print(f"In policy period: {result['incident_in_policy_period']}")
-        print(f"Coverage: {result['coverage_code']} ({result['coverage_name']})")
-        print(f"Deductible: ${result['deductible']:,.2f}")
-        print(f"Vehicle: {result['vehicle_year']} {result['vehicle_make']} {result['vehicle_model']} "
-              f"(${result['vehicle_value']:,.2f})")
-        print(f"Errors: {result['errors']}")
-        print(f"Warnings: {result['warnings']}")
-        cust_id = result['customer_id']
-        print(f"\nCustomer ID: {cust_id}")
-        cust_result = verify_identity(customer_id=cust_id)
-        print(f"Customer verified: {cust_result['verified']}")
-        print(f"Name: {cust_result['customer_name']}")
-        print(f"Policies: {cust_result['policies']}")
-        print(f"Segment: {cust_result.get('customer_segment', 'N/A')}")
-    else:
-        print("No data loaded.")

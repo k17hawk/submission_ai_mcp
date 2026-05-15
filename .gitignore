@@ -220,3 +220,5 @@ dataset/
 *.pdf
 *.xlsx
 *.xlsx#
+*.csv
+*.pkl
