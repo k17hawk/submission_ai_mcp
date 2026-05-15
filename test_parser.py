@@ -33,10 +33,25 @@ parser = SubmissionParser()
 DATA_PATH = "/home/lang-chain/Documents/mcp_insurance/underwriting_50k_dataset.xlsx"
 service = PolicyLookupService(DATA_PATH)
 
-# Override coverage mapping so "Other" works with all coverage types
+# Extend coverage mapping so "Other" works with all coverage types
 INCIDENT_TO_COVERAGE.update({
     "Other": ["COMP", "COLL", "LIAB", "UNINSMOT", "MED", "PIP"],
 })
+
+# Realistic incident types and severities (based on data generator)
+INCIDENT_TYPES = [
+    "Single Vehicle Collision",
+    "Multi-vehicle Collision",
+    "Parked Car",
+    "Vehicle Theft",
+    "Other",
+]
+# Weights reflect typical claim volumes
+INCIDENT_WEIGHTS = [0.35, 0.30, 0.15, 0.10, 0.10]
+
+SEVERITIES = ["Minor Damage", "Major Damage", "Total Loss", "Trivial Damage"]
+# Realistic severity distribution
+SEVERITY_WEIGHTS = [0.45, 0.30, 0.15, 0.10]
 
 
 def pick_active_policy(service: PolicyLookupService):
@@ -58,6 +73,23 @@ def pick_active_policy(service: PolicyLookupService):
     return None
 
 
+def split_claim_amount(total: float, incident_type: str, severity: str) -> tuple:
+    """
+    Realistic split of total claim amount into vehicle, injury, property.
+    Based on incident type and severity (matches generator logic).
+    """
+    if incident_type == "Vehicle Theft":
+        return (total, 0.0, 0.0)
+    if severity == "Total Loss":
+        return (total * 0.9, total * 0.05, total * 0.05)
+    elif severity == "Major Damage":
+        return (total * 0.7, total * 0.2, total * 0.1)
+    elif severity == "Minor Damage":
+        return (total * 0.6, total * 0.3, total * 0.1)
+    else:  # Trivial Damage
+        return (total * 0.8, total * 0.1, total * 0.1)
+
+
 def generate_claim_amount(severity: str, vehicle_value: float) -> float:
     """Generate a plausible claim amount based on severity and vehicle value."""
     if severity == "Total Loss":
@@ -66,7 +98,7 @@ def generate_claim_amount(severity: str, vehicle_value: float) -> float:
         return round(vehicle_value * random.uniform(0.25, 0.65), 2)
     elif severity == "Minor Damage":
         return round(vehicle_value * random.uniform(0.05, 0.25), 2)
-    else:
+    else:  # Trivial Damage
         return round(random.uniform(200, 1500), 2)
 
 
@@ -88,21 +120,29 @@ delta = random.randint(min_days, max(min_days, (exp - eff).days))
 inc_date = eff + timedelta(days=delta)
 inc_date_str = inc_date.strftime("%Y-%m-%d")
 
-# Pick compatible incident type
+# Pick compatible incident type (respect coverage mapping)
 compatible_types = [
-    inc for inc, covs in INCIDENT_TO_COVERAGE.items()
-    if policy.coverage_code in covs
+    inc for inc in INCIDENT_TYPES
+    if policy.coverage_code in INCIDENT_TO_COVERAGE.get(inc, [])
 ]
 if not compatible_types:
     print(f"❌ Policy {policy.policy_number} has coverage '{policy.coverage_code}'")
     print(f"   No incident types map to this coverage.")
     sys.exit(1)
 
-inc_type = random.choice(compatible_types)
-severity = random.choice(["Minor Damage", "Major Damage"])
-claim_amount = generate_claim_amount(severity, policy.vehicle_value)
+# Select incident type with realistic distribution (but limited to compatible)
+# Filter weights to only compatible types
+filtered_weights = [INCIDENT_WEIGHTS[INCIDENT_TYPES.index(t)] for t in compatible_types]
+inc_type = random.choices(compatible_types, weights=filtered_weights, k=1)[0]
 
-# Build claim text
+# Select severity with realistic distribution
+severity = random.choices(SEVERITIES, weights=SEVERITY_WEIGHTS, k=1)[0]
+
+# Generate claim amount and split
+claim_amount = generate_claim_amount(severity, policy.vehicle_value)
+vehicle_claim, injury_claim, property_claim = split_claim_amount(claim_amount, inc_type, severity)
+
+# Build claim text (includes the incident type and severity)
 claim_text = (
     f"Hi, I need to file a claim. On {inc_date_str} I was involved in a "
     f"{inc_type} on Highway in Springfield, IL. "
@@ -136,6 +176,7 @@ print()
 print(f"Incident Date: {inc_date_str} (day {delta} of policy)")
 print(f"Type: {inc_type} | Severity: {severity}")
 print(f"Amount: ${claim_amount:,.2f}")
+print(f"Claim Breakdown: Vehicle=${vehicle_claim:,.2f}, Injury=${injury_claim:,.2f}, Property=${property_claim:,.2f}")
 print()
 
 print("Parsed fields:")
@@ -146,7 +187,7 @@ print(f"  complete: {result.is_complete()}")
 print(f"  confidence: {result.extraction_confidence:.1%}")
 print()
 
-# Inject missing fields
+# Inject missing fields (including claim breakdown)
 if not parsed.get("total_claim_amount"):
     parsed["total_claim_amount"] = claim_amount
 if not parsed.get("police_report_available"):
@@ -155,9 +196,15 @@ if not parsed.get("witnesses"):
     parsed["witnesses"] = 1
 if not parsed.get("bodily_injuries"):
     parsed["bodily_injuries"] = 0
+# Inject claim breakdown (parser doesn't extract these from text yet)
+parsed["vehicle_claim"] = vehicle_claim
+parsed["injury_claim"] = injury_claim
+parsed["property_claim"] = property_claim
 
 print(f"  ℹ️  Injected: total_claim_amount=${claim_amount:,.2f}, "
-      f"police_report=YES, witnesses=1, bodily_injuries=0")
+      f"police_report=YES, witnesses=1, bodily_injuries=0, "
+      f"vehicle_claim=${vehicle_claim:,.2f}, injury_claim=${injury_claim:,.2f}, "
+      f"property_claim=${property_claim:,.2f}")
 print()
 
 
@@ -275,9 +322,10 @@ if customer_id:
     else:
         print(f"\n⚠️  Customer {customer_id} not found in Customer_Master")
 
+# Build feature vector (now includes prior_claims_count from policy data)
 feature_result = build_feature_vector(parsed, policy_data, verification, customer_profile)
 
-print(f"\nFeatures: {feature_result['feature_count']}/27")
+print(f"\nFeatures: {feature_result['feature_count']}/39")   # Note: 39, not 27
 print(f"Customer profile used: {feature_result['customer_profile_used']}")
 print(f"Imputed count: {feature_result['imputed_count']}")
 if feature_result['imputed_fields']:
@@ -328,6 +376,7 @@ print(f"  Incident: {inc_date_str} | {inc_type} | {severity}")
 print(f"  Claim Amount: ${claim_amount:,.2f} "
       f"(deductible: ${policy.coverage_deductible:,.2f}, "
       f"limit: ${policy.coverage_limit:,.2f})")
+print(f"  Claim Breakdown: Vehicle=${vehicle_claim:,.2f}, Injury=${injury_claim:,.2f}, Property=${property_claim:,.2f}")
 print(f"  ─────────────────────────────────────")
 print(f"  Agent 1 — Parsing: {result.extraction_confidence:.1%} confidence, "
       f"{'complete' if result.is_complete() else 'incomplete'}")
@@ -341,7 +390,7 @@ print(f"  Agent 5 — Fraud ML: {fraud_result['fraud_flag']} "
 print(f"  ─────────────────────────────────────")
 print(f"  SIU Required: {'Yes' if risk['requires_siu'] else 'No'}")
 print(f"  Adjuster Required: {'Yes' if risk['requires_adjuster'] else 'No'}")
-print(f"  Imputed Fields: {feature_result['imputed_count']}/27")
+print(f"  Imputed Fields: {feature_result['imputed_count']}/39")
 print("\n✅ Pipeline test completed — 5 agents executed successfully.")
 
 
