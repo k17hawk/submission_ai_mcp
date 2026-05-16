@@ -12,13 +12,11 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 import sys
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from src.mcp_submission_parsing.common.models import (
-    ParsedClaim, PolicyVerification, RiskAssessment, 
+     ParsedClaim, PolicyVerification, RiskAssessment, 
     FeatureVector, FraudPrediction, CompleteClaimResponse, ClaimStatus
 )
+
 from src.mcp_submission_parsing.common.protocols import (
     Message, MessageType, AgentEndpoint, MCPServerProtocol
 )

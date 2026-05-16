@@ -8,10 +8,6 @@ import json
 import sys
 from pathlib import Path
 from typing import Dict, Any
-
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from common.protocols import AgentEndpoint
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -23,7 +19,7 @@ class MCPInsuranceClient:
     def __init__(self):
         self.server_params = StdioServerParameters(
             command="python",
-            args=["servers/main_server.py"]
+            args=["src/mcp_submission_parsing/servers/main_server.py"]
         )
     
     async def call_tool(self, endpoint: AgentEndpoint, payload: Dict[str, Any]) -> Dict[str, Any]:
