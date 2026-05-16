@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Dict, Any
-from common.protocols import AgentEndpoint
+from src.mcp_submission_parsing.common.protocols import AgentEndpoint
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 

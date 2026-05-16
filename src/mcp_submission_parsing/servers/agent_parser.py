@@ -5,9 +5,7 @@ from typing import Dict, Any
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from common.models import ParsedClaim
+from src.mcp_submission_parsing.common.models import ParsedClaim
 
 
 class ParserAgent:
@@ -19,8 +17,8 @@ class ParserAgent:
     
     def _load_patterns(self) -> Dict[str, Any]:
         """Load regex patterns from config"""
-        config_path = Path(__file__).parent.parent / "config" / "field_definitions.yaml"
-        
+        config_path_obj = 'src.mcp_submission_parsing.config.field_definitions.yaml'
+        config_path = Path(config_path_obj)
         if config_path.exists():
             import yaml
             with open(config_path, 'r') as f:

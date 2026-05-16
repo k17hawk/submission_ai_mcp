@@ -12,6 +12,9 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 import sys
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.mcp_submission_parsing.common.models import (
      ParsedClaim, PolicyVerification, RiskAssessment, 
     FeatureVector, FraudPrediction, CompleteClaimResponse, ClaimStatus
@@ -22,7 +25,7 @@ from src.mcp_submission_parsing.common.protocols import (
 )
 
 # Import agents
-from mcp_submission_parsing.servers.agent_parser import ParserAgent
+from src.mcp_submission_parsing.servers.agent_parser import ParserAgent
 from src.mcp_submission_parsing.servers.agent_policy import PolicyAgent
 from src.mcp_submission_parsing.servers.agent_risk import RiskAgent
 from src.mcp_submission_parsing.servers.agent_features import FeatureAgent
