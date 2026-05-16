@@ -17,8 +17,19 @@ from src.mcp_submission_parsing.servers.agent_risk import RiskAgent
 from src.mcp_submission_parsing.servers.agent_features import FeatureAgent
 from src.mcp_submission_parsing.servers.agent_fraud import FraudAgent
 
-# FastMCP imports (replaces the official mcp.server ones)
 from fastmcp import FastMCP
+
+import sys, numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
+
+class QuestionMarkToNaN(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None): return self
+    def transform(self, X):
+        X = X.copy()
+        return X.replace('?', np.nan)
+
+import __main__
+setattr(__main__, 'QuestionMarkToNaN', QuestionMarkToNaN)
 
 mcp = FastMCP("insurance-claim-server")   # ← this is your server object
 
