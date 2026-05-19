@@ -32,12 +32,25 @@ patterns:
     - '(?:time|hour|at)\s*[:#]?\s*(\d{1,2})(?:\s*)?(?:AM|PM|am|pm)?'
 
   # Incident details
+  
+
+  # incident_type: the pileup pattern was capturing the number as group 1
   incident_type:
-    - '(\d+)[-\s]?(?:car|vehicle)\s+(pileup|collision|accident|crash)'
-    - '(Single\s+Vehicle|Multi-vehicle|Parked\s+Car|Vehicle\s+Theft)'
-    - '(rear|front|side)[-\s]?(?:end\s+collision|collision|impact)'
-    - '(?:incident|accident|collision|claim)\s*(?:type|description)?\s*[:#]?\s*(Single Vehicle Collision|Multi-vehicle Collision|Parked Car|Vehicle Theft|Other)'
     - '\b(Single Vehicle Collision|Multi-vehicle Collision|Parked Car|Vehicle Theft|Other)\b'
+    - '(Single\s+Vehicle|Multi-vehicle|Parked\s+Car|Vehicle\s+Theft)'
+    - '\d+[-\s]?(?:car|vehicle)\s+(?:pileup|collision|accident|crash)'  # no capture group → handled by mapping
+
+  # incident_state: require exactly 2 uppercase letters as a standalone token
+  incident_state:
+  - '(?:at|in|near)\s+([A-Z]{2})\s+[A-Z][a-z]'    
+  - '\b(A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|P[AR]|RI|S[CD]|T[NX]|UT|V[AT]|W[AVIY])\b'
+
+  incident_location:
+    - '(I-\d+)'
+    - '(Highway\s*\d+)'
+    - '\b(Parking\s+Lot|Local\s+Road|Residential\s+Street|Freeway)\b'
+    - '(?:location|place)\s*[:#]?\s*(Highway|Parking Lot|Local Road|Interstate|Residential Street)'
+    
 
   collision_type:
     - '(Front|Rear|Side)\s+(?:Collision|End|Impact)'
@@ -48,16 +61,10 @@ patterns:
     - '(?:damage|severity)\s*(?:assessed\s*as|level)?\s*[:#]?\s*(Minor Damage|Major Damage|Total Loss|Trivial Damage)'
     - '\b(Minor Damage|Major Damage|Total Loss|Trivial Damage)\b'
 
-  incident_location:
-    - '(I-\d+)'                                      # "I-95"
-    - '(Highway\s*\d+|Interstate\s*\d+)'             # "Highway 101", "Interstate 40"
-    - '(Parking\s+Lot|Local\s+Road|Residential\s+Street|Freeway)'
-    - '(?:location|place|at)\s*[:#]?\s*(Highway|Parking Lot|Local Road|Interstate|Residential Street)'
 
-  incident_state:
-    - '\b(A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|P[AR]|RI|S[CD]|T[NX]|UT|V[AT]|W[AVIY])\b'
 
   incident_city:
+    - '(?:at|in)\s+[A-Z]{2}\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)'   
     - '(?:at|in)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:[A-Z]{2})\b'
 
   city_state:
