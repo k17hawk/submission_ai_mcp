@@ -1,64 +1,120 @@
-
 # ── Regex Patterns ────────────────────────────────────────────────────────────
 patterns:
+  # Core identifiers
   policy_number:
     - '(?:policy\s*(?:number|#|ref|reference)?\s*[:#]?\s*)?(POL-\d{6})'
     - 'POL-\d{6}'
-  
+    - 'Policy\s+(POL[-\s]?\d{6})'                     # "Policy POL-651065"
+    - 'POL[-](\d{6})'                                 # "POL-651065"
+    - 'policy[:\s#]+(POL[-]?\d{6})'
+
+  customer_id:
+    - 'CUST[-](\d{5,})'                               # "CUST-93810"
+    - 'customer[:\s#]+(CUST[-]?\d+)'
+
+  customer_name:
+    - 'Name[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s+with|\s+CUST|\s+policy|$)'
+    - '^([A-Z][a-z]+\s+[A-Z][a-z]+)(?:\s+with|\s+CUST)'
+
+  # Date / Time
   incident_date:
+    - 'at\s+(\d{4}-\d{2}-\d{2})'                     # "at 2022-08-09"
+    - 'on\s+(\d{4}-\d{2}-\d{2})'
+    - '\bon\s+(\d{1,2}/\d{1,2}/\d{4})'
     - '(?:incident|accident|loss|claim)?\s*(?:date)?\s*[:#]?\s*(\d{4}-\d{2}-\d{2})'
     - '(?:incident|accident|loss)\s*(?:date)?\s*[:#]?\s*(\d{1,2}/\d{1,2}/\d{4})'
-  
-  year_make_model:
-    - '(\d{4})\s+(Toyota|Honda|Ford|Chevrolet|BMW|Nissan|Jeep|Dodge|Hyundai|Kia)\s+([A-Za-z0-9\-]+)'
-  
+
+  incident_time:
+    - '(\d{1,2})\s*(?:hours?|hrs?)\s+ago'            # "8 hours ago"
+    - '(?:at|around)\s+(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))'
+
+  incident_hour_of_the_day:                          # Derived field, but pattern for raw hour
+    - '(?:time|hour|at)\s*[:#]?\s*(\d{1,2})(?:\s*)?(?:AM|PM|am|pm)?'
+
+  # Incident details
   incident_type:
+    - '(\d+)[-\s]?(?:car|vehicle)\s+(pileup|collision|accident|crash)'
+    - '(Single\s+Vehicle|Multi-vehicle|Parked\s+Car|Vehicle\s+Theft)'
+    - '(rear|front|side)[-\s]?(?:end\s+collision|collision|impact)'
     - '(?:incident|accident|collision|claim)\s*(?:type|description)?\s*[:#]?\s*(Single Vehicle Collision|Multi-vehicle Collision|Parked Car|Vehicle Theft|Other)'
     - '\b(Single Vehicle Collision|Multi-vehicle Collision|Parked Car|Vehicle Theft|Other)\b'
+
+  collision_type:
+    - '(Front|Rear|Side)\s+(?:Collision|End|Impact)'
+    - '(Head-On|T-Bone|Sideswipe|Rear-End)'
+    - '(?:collision|impact)\s*(?:type)?\s*[:#]?\s*(Front Collision|Rear Collision|Side Collision)'
 
   incident_severity:
     - '(?:damage|severity)\s*(?:assessed\s*as|level)?\s*[:#]?\s*(Minor Damage|Major Damage|Total Loss|Trivial Damage)'
     - '\b(Minor Damage|Major Damage|Total Loss|Trivial Damage)\b'
-  
+
   incident_location:
+    - '(I-\d+)'                                      # "I-95"
+    - '(Highway\s*\d+|Interstate\s*\d+)'             # "Highway 101", "Interstate 40"
+    - '(Parking\s+Lot|Local\s+Road|Residential\s+Street|Freeway)'
     - '(?:location|place|at)\s*[:#]?\s*(Highway|Parking Lot|Local Road|Interstate|Residential Street)'
-  
+
+  incident_state:
+    - '\b(A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|P[AR]|RI|S[CD]|T[NX]|UT|V[AT]|W[AVIY])\b'
+
+  incident_city:
+    - '(?:at|in)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:[A-Z]{2})\b'
+
   city_state:
     - '(?:in|at)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s*[,]\s*([A-Z]{2})'
-  
+
+  # Vehicle information
   auto_year:
+    - '(?<!\d)(19[8-9]\d|20[0-1]\d)(?!\d)'           # Avoid matching date years
     - '(?:vehicle|car|auto)\s*(?:year|model\s*year)?\s*[:#]?\s*(\d{4})'
-  
+
+  auto_make:
+    - '\b(Toyota|Honda|Ford|Chevrolet|BMW|Nissan|Jeep|Dodge|Hyundai|Kia|Subaru|Tesla|Mercedes|Audi)\b'
+
+  auto_model:
+    - '(?:Chevrolet|Ford|Toyota|Honda|Nissan|Jeep|Dodge|Hyundai|Kia|Subaru|BMW|Audi|Mercedes)\s+([A-Z][a-zA-Z0-9]+(?:\s[A-Z][a-zA-Z0-9]+)?)'
+
+  year_make_model:
+    - '(\d{4})\s+(Toyota|Honda|Ford|Chevrolet|BMW|Nissan|Jeep|Dodge|Hyundai|Kia)\s+([A-Za-z0-9\-]+)'
+
   make_model:
     - '(Toyota|Honda|Ford|Chevrolet|BMW|Nissan|Jeep|Dodge|Hyundai|Kia)\s+([A-Z][a-z]+(?:\s?-?[A-Z]?\d+)?)'
-  
-  authorities_contacted:
-    - '(?:authorities|contacted|called)\s*[:#]?\s*(Police|Fire|Ambulance|None|Other)'
-  
-  collision_type:
-    - '(?:collision|impact)\s*(?:type)?\s*[:#]?\s*(Front Collision|Rear Collision|Side Collision)'
-  
+
+  # Claim metrics
   number_of_vehicles:
+    - '(\d+)[-\s]?(?:car|vehicle)s?\s+(?:pileup|collision|accident|crash|involved)'
+    - '(\d+)\s+vehicles?\s+involved'
     - '(?:number\s*of\s*vehicles|vehicles\s*involved)\s*[:#]?\s*(\d+)'
-  
-  bodily_injuries:
-    - '(?:bodily\s*injuries|injuries|people\s*hurt)\s*[:#]?\s*(\d+)'
-  
+
   witnesses:
+    - '(\d+)\s+witnesses?'
+    - 'witness(?:es)?\s*:?\s*(\d+)'
     - '(?:witnesses|witness)\s*[:#]?\s*(\d+)'
-  
+
+  bodily_injuries:
+    - '(\d+)\s+(?:people|persons?|individuals?)\s+(?:injured|hurt)'
+    - '(\d+)\s+injur(?:y|ies)'
+    - '(?:bodily\s*injuries|injuries|people\s*hurt)\s*[:#]?\s*(\d+)'
+
   police_report:
+    - 'police\s+report\s+(available|filed|yes|true)'
+    - '(?:no|without)\s+police\s+report'
     - '(?:police\s*report)\s*(?:available|filed)?\s*[:#]?\s*(YES|NO|Yes|No|Y|N)'
     - '(?:police\s*report)\s*(filed|available|submitted)'
-  
-  property_damage:
+
+  property_damage:                                   # YES/NO field
     - '(?:property\s*damage)\s*[:#]?\s*(YES|NO|Yes|No|Y|N|\?)'
-  
+
+  property_damage_amount:                            # Dollar amount for property damage
+    - 'property\s+damage\s+(?:estimated|around|about)?\s*\$?\s*([\d,]+)'
+
   total_claim_amount:
+    - '\$\s*([\d,]+(?:\.\d{2})?)'
+    - '(?:damage|claim|amount)[:\s]+\$?\s*([\d,]+(?:\.\d{2})?)'
     - '(?:total\s*claim\s*amount|claim\s*amount|amount)\s*[:#]?\s*\$?([\d,]+\.?\d*)'
-  
-  incident_hour:
-    - '(?:time|hour|at)\s*[:#]?\s*(\d{1,2})(?:\s*)?(?:AM|PM|am|pm)?'
+
+  authorities_contacted:
+    - '(?:authorities|contacted|called)\s*[:#]?\s*(Police|Fire|Ambulance|None|Other)'
 
 # ── Auto Makes (valid values) ─────────────────────────────────────────────────
 auto_makes:
@@ -72,6 +128,10 @@ auto_makes:
   - "Dodge"
   - "Hyundai"
   - "Kia"
+  - "Subaru"
+  - "Tesla"
+  - "Mercedes"
+  - "Audi"
 
 # ── Valid Categorical Values ──────────────────────────────────────────────────
 valid_values:
@@ -109,21 +169,21 @@ valid_values:
     - "?"
 
   incident_state:
-  - "NY"
-  - "CA"
-  - "TX"
-  - "FL"
-  - "IL"
-  - "PA"
-  - "OH"
-  - "GA"
-  - "NC"
-  - "MI"
-  - "NJ"
-  - "VA"
-  - "WA"
-  - "AZ"
-  - "MA"
+    - "NY"
+    - "CA"
+    - "TX"
+    - "FL"
+    - "IL"
+    - "PA"
+    - "OH"
+    - "GA"
+    - "NC"
+    - "MI"
+    - "NJ"
+    - "VA"
+    - "WA"
+    - "AZ"
+    - "MA"
 
 # ── Synonym Mappings (raw text → canonical value) ─────────────────────────────
 mappings:
@@ -219,10 +279,14 @@ required_fields:
   - auto_make
 
 optional_fields:
+  - customer_id
+  - customer_name
   - incident_severity
   - incident_location
   - incident_city
   - incident_state
+  - incident_time
+  - incident_hour_of_the_day
   - auto_model
   - auto_year
   - authorities_contacted
@@ -232,5 +296,5 @@ optional_fields:
   - witnesses
   - police_report_available
   - property_damage
+  - property_damage_amount
   - total_claim_amount
-  - incident_hour_of_the_day
