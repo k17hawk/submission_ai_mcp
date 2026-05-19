@@ -12,17 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.mcp_submission_parsing.extractor.field_normalizer import FieldNormalizer
 from src.mcp_submission_parsing.extractor.regex_extractor import RegexExtractor
 from src.mcp_submission_parsing.config import load_config, get_patterns, get_normalizer_config
+from src.mcp_submission_parsing.config.logger_config import get_logger
 
-# Configure logger
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-# Console handler for debugging
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
+logger = get_logger("parsing agent")
 
 
 class ParserAgent:
@@ -237,9 +229,6 @@ class ParserAgent:
 
         # ------------------------------------------------------------------
         # 0. Pileup / multi-vehicle detection from raw text.
-        #    The pileup regex pattern has no capture group (intentionally),
-        #    so the extractor won't populate incident_type for "2-car pileup".
-        #    We check raw text and set the canonical value directly.
         # ------------------------------------------------------------------
         if not processed.get('incident_type') or processed.get('incident_type', '').isdigit():
             logger.debug("Checking for pileup/multi-vehicle pattern in text")
@@ -273,7 +262,7 @@ class ParserAgent:
                 normalized = self.field_normalizer.normalize_auto_make(value)
                 logger.debug(f"Normalized auto_make: '{value}' -> '{normalized}'")
             elif field in ('incident_type', 'incident_severity', 'incident_location',
-                           'authorities_contacted', 'collision_type'):
+                        'authorities_contacted', 'collision_type'):
                 normalized = self.field_normalizer.normalize(field, value)
                 logger.debug(f"Normalized '{field}': '{value}' -> '{normalized}'")
 
@@ -307,8 +296,18 @@ class ParserAgent:
             logger.debug(f"Cleaned policy_number: '{original}' -> '{processed['policy_number']}'")
 
         # ------------------------------------------------------------------
-        # 4. Customer ID prefix cleanup — handled in step 7f below
+        # 4. Customer ID prefix cleanup
         # ------------------------------------------------------------------
+        if 'customer_id' in processed:
+            original = processed['customer_id']
+            cid = processed['customer_id']
+            if not cid.upper().startswith('CUST'):
+                processed['customer_id'] = f"CUST-{cid}"
+                logger.debug(f"Added CUST- prefix to customer_id: '{original}' -> '{processed['customer_id']}'")
+            else:
+                cid = re.sub(r'^CUST[-\s]?', '', cid, flags=re.IGNORECASE)
+                processed['customer_id'] = f"CUST-{cid}"
+                logger.debug(f"Reformatted customer_id: '{original}' -> '{processed['customer_id']}'")
 
         # ------------------------------------------------------------------
         # 5. Customer name: strip trailing context words
@@ -339,15 +338,13 @@ class ParserAgent:
                 logger.debug("No valid incident_state found in text")
 
         # ------------------------------------------------------------------
-        # 7. incident_location: prefer specific code like "I-95" over generic.
+        # 7. incident_location: removed the override that set raw highway code.
+        #    Now relies solely on FieldNormalizer mapping (e.g., I-95 -> Interstate).
         # ------------------------------------------------------------------
-        raw_location, _ = self.regex_extractor.extract('incident_location', text)
-        if raw_location and re.match(r'^I-\d+$', raw_location.strip()):
-            processed['incident_location'] = raw_location.strip()
-            logger.debug(f"Set incident_location to highway code: '{raw_location.strip()}'")
+        # The old override block has been removed. The normalized value from step 1 remains.
 
         # ------------------------------------------------------------------
-        # 7b. incident_city: strip trailing conjunctions/noise.
+        # 8. incident_city: strip trailing conjunctions/noise.
         # ------------------------------------------------------------------
         if 'incident_city' in processed:
             original = processed['incident_city']
@@ -357,7 +354,7 @@ class ParserAgent:
             logger.debug(f"Cleaned incident_city: '{original}' -> '{processed.get('incident_city', 'REMOVED')}'")
 
         # ------------------------------------------------------------------
-        # 7c. auto_model: drop noise values that aren't real model names.
+        # 9. auto_model: drop noise values that aren't real model names.
         # ------------------------------------------------------------------
         if 'auto_model' in processed:
             model = processed['auto_model']
@@ -367,7 +364,7 @@ class ParserAgent:
                 logger.debug(f"Removed invalid auto_model '{model}' (noise or invalid format)")
 
         # ------------------------------------------------------------------
-        # 7d. total_claim_amount: ensure it's a float, not a raw string.
+        # 10. total_claim_amount: ensure it's a float, not a raw string.
         # ------------------------------------------------------------------
         if 'total_claim_amount' in processed:
             val = processed['total_claim_amount']
@@ -382,7 +379,7 @@ class ParserAgent:
                     logger.debug(f"Failed to normalize total_claim_amount '{val}', removed field")
 
         # ------------------------------------------------------------------
-        # 7e. police_report_available: normalize raw match to YES / NO / ?
+        # 11. police_report_available: normalize raw match to YES / NO / ?
         # ------------------------------------------------------------------
         if 'police_report_available' in processed:
             val = processed['police_report_available']
@@ -400,22 +397,8 @@ class ParserAgent:
                     logger.debug("Set to 'NO' based on pattern match")
 
         # ------------------------------------------------------------------
-        # 7f. customer_id: ensure CUST-XXXXX format (pattern captures digits only).
-        # ------------------------------------------------------------------
-        if 'customer_id' in processed:
-            original = processed['customer_id']
-            cid = processed['customer_id']
-            if not cid.upper().startswith('CUST'):
-                processed['customer_id'] = f"CUST-{cid}"
-                logger.debug(f"Added CUST- prefix to customer_id: '{original}' -> '{processed['customer_id']}'")
-            else:
-                cid = re.sub(r'^CUST[-\s]?', '', cid, flags=re.IGNORECASE)
-                processed['customer_id'] = f"CUST-{cid}"
-                logger.debug(f"Reformatted customer_id: '{original}' -> '{processed['customer_id']}'")
-
-        # ------------------------------------------------------------------
-        # 8. Integer fields: ensure witnesses, bodily_injuries,
-        #    number_of_vehicles are stored as int, not string.
+        # 12. Integer fields: ensure witnesses, bodily_injuries,
+        #     number_of_vehicles are stored as int, not string.
         # ------------------------------------------------------------------
         for int_field in ('witnesses', 'bodily_injuries', 'number_of_vehicles'):
             if int_field in processed:
@@ -428,8 +411,7 @@ class ParserAgent:
                     processed.pop(int_field, None)
 
         # ------------------------------------------------------------------
-        # 9. Remove internal-only pattern keys from the final output.
-        #    These were used only as intermediate extraction helpers.
+        # 13. Remove internal-only pattern keys from the final output.
         # ------------------------------------------------------------------
         removed_fields = []
         for field in self.internal_only_fields:
@@ -441,6 +423,47 @@ class ParserAgent:
 
         logger.info("Post-processing complete")
         return processed
+
+
+    def _normalize_auto_year(self, extracted: Dict, text: str, submission_time=None):
+        """Ensure auto_year is a valid integer, preferring vehicle-specific year over date year."""
+        # If year_make_model exists, use that as the primary source
+        if 'year_make_model' in extracted and extracted['year_make_model']:
+            try:
+                year = int(str(extracted['year_make_model']).strip())
+                current_year = datetime.now().year
+                if 1980 <= year <= current_year + 1:
+                    extracted['auto_year'] = year
+                    logger.debug(f"Using auto_year from year_make_model: {year}")
+                    # Remove the raw auto_year if it conflicts
+                    if 'auto_year' in extracted:
+                        del extracted['auto_year']
+                    return
+            except (ValueError, TypeError):
+                pass
+        
+        # Otherwise, fall back to existing auto_year with date conflict check
+        if 'auto_year' in extracted:
+            year = extracted['auto_year']
+            try:
+                year_int = int(str(year).replace(',', ''))
+                current_year = datetime.now().year
+                
+                # Reject if this year matches the incident_date year
+                inc_date = extracted.get('incident_date')
+                if inc_date and isinstance(inc_date, str) and len(inc_date) >= 4:
+                    date_year = int(inc_date[:4])
+                    if year_int == date_year:
+                        logger.debug(f"Auto_year {year_int} matches incident_date year, discarding")
+                        del extracted['auto_year']
+                        return
+                
+                if 1980 <= year_int <= current_year + 1:
+                    extracted['auto_year'] = year_int
+                else:
+                    del extracted['auto_year']
+            except (ValueError, TypeError):
+                extracted.pop('auto_year', None)
 
     # -------------------------------------------------------------------------
     # Derived field handlers
@@ -552,24 +575,6 @@ class ParserAgent:
         """
         logger.debug("Integer field normalization handler called (bulk conversion handled elsewhere)")
         pass  # Bulk conversion handled in _post_process_fields step 8
-
-    def _normalize_auto_year(self, extracted: Dict, text: str, submission_time=None):
-        """Ensure auto_year is a valid integer within a reasonable range"""
-        logger.debug("Normalizing auto_year")
-        if 'auto_year' in extracted:
-            year = extracted['auto_year']
-            try:
-                year_int = int(str(year).replace(',', ''))
-                current_year = datetime.now().year
-                if 1980 <= year_int <= current_year + 1:
-                    extracted['auto_year'] = year_int
-                    logger.debug(f"Valid auto_year: {year_int}")
-                else:
-                    logger.debug(f"Auto_year {year_int} outside valid range (1980-{current_year+1}), removing")
-                    del extracted['auto_year']
-            except (ValueError, TypeError) as e:
-                logger.debug(f"Failed to convert auto_year '{year}': {e}")
-                extracted.pop('auto_year', None)
 
     def _normalize_auto_make(self, extracted: Dict, text: str, submission_time=None):
         """Ensure auto_make is normalized (FieldNormalizer handles the heavy lifting)"""

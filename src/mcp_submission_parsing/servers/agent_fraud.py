@@ -5,7 +5,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import sys
-
+from src.mcp_submission_parsing.config.logger_config import get_logger  
+logger = get_logger('fraud agent')
 
 class FraudAgent:
     """Detects fraud using ML model"""
@@ -14,6 +15,7 @@ class FraudAgent:
         self.model = None
         self.threshold = 0.5
         self.model_path = model_path or "/home/lang-chain/Documents/mcp_insurance/notebook/best_ensemble_fraud_model.pkl"
+        logger.info(f"Initializing FraudAgent with model path: {self.model_path}")
         self._load_model()
     
     def _load_model(self):
@@ -22,15 +24,16 @@ class FraudAgent:
             import joblib
             
             if Path(self.model_path).exists():
+                logger.info(f"Loading model from {self.model_path}")
                 payload = joblib.load(self.model_path)
                 self.model = payload.get('pipeline')
                 self.threshold = payload.get('threshold', 0.5)
-                print(f"✅ Loaded fraud detection model (threshold: {self.threshold})")
+                logger.info(f"✅ Loaded fraud detection model (threshold: {self.threshold})")
             else:
-                print(f"⚠️ Model not found at {self.model_path}, using rule-based fallback")
+                logger.warning(f"⚠️ Model not found at {self.model_path}, using rule-based fallback")
                 self.model = None
         except Exception as e:
-            print(f"⚠️ Error loading model: {e}")
+            logger.error(f"⚠️ Error loading model: {e}", exc_info=True)
             self.model = None
     
     async def __call__(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,22 +41,26 @@ class FraudAgent:
         
         features = payload.get('features', {})
         claim_text = payload.get('claim_text', '')
+        logger.debug(f"Fraud detection called with claim_text length: {len(claim_text)}, features keys: {list(features.keys())}")
         
         # Use ML model if available
         if self.model:
             try:
                 # Prepare DataFrame
                 X = pd.DataFrame([features])
+                logger.debug("Prepared feature DataFrame for ML prediction")
                 
                 # Get prediction
                 proba = self.model.predict_proba(X)[0, 1]
                 fraud_prob = float(proba)
+                logger.info(f"ML prediction completed: fraud_probability = {fraud_prob:.4f}")
                 
             except Exception as e:
-                print(f"ML prediction failed: {e}")
+                logger.error(f"ML prediction failed: {e}", exc_info=True)
                 fraud_prob = self._rule_based_fraud_score(features, claim_text)
+                logger.info(f"Fallback rule-based score used: {fraud_prob:.4f}")
         else:
-            # Use rule-based fallback
+            logger.info("No ML model available, using rule-based fallback")
             fraud_prob = self._rule_based_fraud_score(features, claim_text)
         
         # Determine flag and risk level
@@ -68,38 +75,53 @@ class FraudAgent:
         else:
             risk_level = "MINIMAL"
         
+        requires_siu = fraud_prob >= 0.65
+        logger.info(f"Fraud decision: probability={fraud_prob:.4f}, threshold={self.threshold}, flag={fraud_flag}, risk={risk_level}, SIU_required={requires_siu}")
+        
         return {
             'fraud_probability': round(fraud_prob, 4),
             'fraud_flag': fraud_flag,
             'risk_level': risk_level,
             'threshold_used': self.threshold,
-            'requires_siu': fraud_prob >= 0.65,
+            'requires_siu': requires_siu,
             'model_version': '1.0'
         }
     
     def _rule_based_fraud_score(self, features: Dict[str, Any], claim_text: str) -> float:
         """Fallback rule-based fraud scoring"""
+        logger.debug("Computing rule-based fraud score")
         score = 0.0
         
         # High claim amount
-        if features.get('total_claim_amount', 0) > 25000:
+        total_claim = features.get('total_claim_amount', 0)
+        if total_claim > 25000:
             score += 0.3
+            logger.debug(f"High claim amount ${total_claim}: +0.3")
         
         # Late night incident
         hour = features.get('incident_hour_of_the_day', 12)
         if hour >= 23 or hour <= 5:
             score += 0.2
+            logger.debug(f"Late night incident hour {hour}: +0.2")
         
         # No police report for large claim
-        if features.get('total_claim_amount', 0) > 5000 and features.get('police_report_available') != 'YES':
+        if total_claim > 5000 and features.get('police_report_available') != 'YES':
             score += 0.25
+            logger.debug(f"Large claim ${total_claim} without police report: +0.25")
         
         # Multiple prior claims
-        if features.get('prior_claims_count', 0) > 2:
+        prior_claims = features.get('prior_claims_count', 0)
+        if prior_claims > 2:
             score += 0.15
+            logger.debug(f"Multiple prior claims ({prior_claims}): +0.15")
         
         # No witnesses
-        if features.get('witnesses', 0) == 0 and features.get('number_of_vehicles_involved', 1) > 1:
+        witnesses = features.get('witnesses', 0)
+        vehicles = features.get('number_of_vehicles_involved', 1)
+        if witnesses == 0 and vehicles > 1:
             score += 0.1
+            logger.debug(f"No witnesses with {vehicles} vehicles involved: +0.1")
         
-        return min(score, 0.95)
+        final_score = min(score, 0.95)
+        logger.debug(f"Rule-based score computed: {final_score:.4f}")
+        return final_score
