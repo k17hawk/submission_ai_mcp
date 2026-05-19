@@ -26,9 +26,18 @@ async def process_claim(text, name, cid):
                 "complete_pipeline",
                 {"claim_text": text, "customer_name": name, "customer_id": cid},
             )
-            return result
+            import json
+            # Debug: see raw content
+            raw = result.content[0].text
+            st.write("DEBUG raw:", raw[:500])
+
+            clean = raw.strip()
+            if clean.startswith("```"):
+                clean = "\n".join(clean.split("\n")[1:-1])
+            
+            return json.loads(clean)
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"{type(e).__name__}: {str(e)}"}
 
 if submitted:
     with st.spinner("Processing claim..."):

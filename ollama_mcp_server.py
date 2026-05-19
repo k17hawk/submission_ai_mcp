@@ -89,17 +89,17 @@ async def health_check() -> Dict[str, Any]:
             "complete_pipeline"
         ]
     }
-
 @mcp.tool()
 async def complete_pipeline(
     claim_text: str, customer_name: str = "", customer_id: str = ""
 ) -> Dict[str, Any]:
     """Complete claim processing pipeline - fails honestly on missing data"""
+    import dataclasses
     start = time.time()
-    
+
     # Step 1: Parse claim
     parse_result = await parser_agent({"text": claim_text, "use_llm": False})
-    
+
     if parse_result.get('error'):
         return {
             "error": parse_result['error'],
@@ -108,11 +108,11 @@ async def complete_pipeline(
             "missing_data": parse_result.get('missing_fields', []),
             "extraction_confidence": parse_result.get('extraction_confidence', 0)
         }
-    
+
     # Check if we have minimum required data
     required_for_processing = ['policy_number', 'incident_date', 'incident_type']
     missing = [f for f in required_for_processing if not parse_result.get(f)]
-    
+
     if missing:
         return {
             "error": f"Cannot process claim: missing required fields: {', '.join(missing)}",
@@ -121,7 +121,7 @@ async def complete_pipeline(
             "final_decision": "INCOMPLETE_SUBMISSION",
             "recommended_action": "Request missing information from customer"
         }
-    
+
     # Step 2: Lookup policy with complete data
     policy_result = await policy_agent({
         "policy_number": parse_result['policy_number'],
@@ -129,7 +129,7 @@ async def complete_pipeline(
         "incident_type": parse_result['incident_type'],
         "claim_amount": parse_result.get('total_claim_amount', 0)
     })
-    
+
     if not policy_result.get('found'):
         return {
             "error": f"Policy {parse_result['policy_number']} not found",
@@ -137,13 +137,13 @@ async def complete_pipeline(
             "final_decision": "POLICY_NOT_FOUND",
             "extracted_data": parse_result
         }
-    
+
     # Check for critical missing data
     critical_missing = []
     for field in ['deductible', 'csl', 'credit_score']:
         if policy_result.get(field) is None:
             critical_missing.append(field)
-    
+
     if critical_missing:
         return {
             "error": f"Policy found but missing critical data: {', '.join(critical_missing)}",
@@ -153,22 +153,30 @@ async def complete_pipeline(
             "extracted_data": parse_result,
             "recommended_action": "Manual underwriting review required"
         }
-    
+
     # Step 3-5: Continue processing only if we have complete data
     try:
-        # Create ParsedClaim object
-        parsed_claim = ParsedClaim(**parse_result)
-        
-        # Create PolicyVerification object
-        policy_verification = PolicyVerification(**policy_result)
-        
+        # Create ParsedClaim — filter to only known fields
+        known_parsed_fields = {f.name for f in dataclasses.fields(ParsedClaim)}
+        filtered_parse = {k: v for k, v in parse_result.items() if k in known_parsed_fields}
+        parsed_claim = ParsedClaim(**filtered_parse)
+
+        # Create PolicyVerification — filter to only known fields
+        known_policy_fields = {f.name for f in dataclasses.fields(PolicyVerification)}
+        filtered_policy = {k: v for k, v in policy_result.items() if k in known_policy_fields}
+        policy_verification = PolicyVerification(**filtered_policy)
+
         # Risk assessment
         risk_result = await risk_agent({
             "parsed": parsed_claim.to_dict(),
             "verification": policy_verification.to_dict()
         })
-        risk_assessment = RiskAssessment(**risk_result)
-        
+
+        # Filter RiskAssessment fields
+        known_risk_fields = {f.name for f in dataclasses.fields(RiskAssessment)}
+        filtered_risk = {k: v for k, v in risk_result.items() if k in known_risk_fields}
+        risk_assessment = RiskAssessment(**filtered_risk)
+
         # Feature building
         features_result = await feature_agent({
             "parsed": parsed_claim.to_dict(),
@@ -176,29 +184,40 @@ async def complete_pipeline(
             "verification": policy_verification.to_dict(),
             "customer_id": customer_id or policy_result.get('customer_id', '')
         })
-        feature_vector = FeatureVector(**features_result)
-        
+
+        # Filter FeatureVector fields
+        known_feature_fields = {f.name for f in dataclasses.fields(FeatureVector)}
+        filtered_features = {k: v for k, v in features_result.items() if k in known_feature_fields}
+        feature_vector = FeatureVector(**filtered_features)
+
         # Fraud detection
         fraud_result = await fraud_agent({
             "features": feature_vector.features,
             "claim_text": claim_text
         })
-        fraud_prediction = FraudPrediction(**fraud_result)
-        
+
+        # Filter FraudPrediction fields
+        known_fraud_fields = {f.name for f in dataclasses.fields(FraudPrediction)}
+        filtered_fraud = {k: v for k, v in fraud_result.items() if k in known_fraud_fields}
+        fraud_prediction = FraudPrediction(**filtered_fraud)
+
         # Make decision
-        risk_score = risk_assessment.risk_score
-        fraud_prob = fraud_prediction.fraud_probability
-        
+        risk_score  = risk_assessment.risk_score
+        fraud_prob  = fraud_prediction.fraud_probability
+
         if risk_score >= 0.7 or fraud_prob >= 0.75:
-            final_decision, recommended_action = "AUTO_DENY", "Refer to SIU with high priority"
+            final_decision     = "AUTO_DENY"
+            recommended_action = "Refer to SIU with high priority"
         elif risk_score >= 0.3 or fraud_prob >= 0.5:
-            final_decision, recommended_action = "ADJUSTER_REVIEW", "Send to adjuster for detailed review"
+            final_decision     = "ADJUSTER_REVIEW"
+            recommended_action = "Send to adjuster for detailed review"
         elif risk_score <= 0.1 and fraud_prob <= 0.25:
-            final_decision, recommended_action = "AUTO_APPROVE", "Auto-approve claim"
+            final_decision     = "AUTO_APPROVE"
+            recommended_action = "Auto-approve claim"
         else:
-            final_decision, recommended_action = "MANUAL_REVIEW", "Manual review required"
-        
-        # Return complete response with warnings about missing data
+            final_decision     = "MANUAL_REVIEW"
+            recommended_action = "Manual review required"
+
         return {
             "status": "PROCESSED",
             "final_decision": final_decision,
@@ -211,7 +230,7 @@ async def complete_pipeline(
             "missing_data_warnings": critical_missing if critical_missing else None,
             "processing_time_ms": (time.time() - start) * 1000
         }
-        
+
     except Exception as e:
         return {
             "error": f"Processing failed: {str(e)}",

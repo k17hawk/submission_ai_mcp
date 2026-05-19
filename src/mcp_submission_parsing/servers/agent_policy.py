@@ -37,10 +37,11 @@ class PolicyAgent:
             coverage_idx = coverage_df.set_index('policy_number').groupby(level=0).first()
 
             customer_df['customer_id'] = customer_df['customer_id'].astype(str)
-            customer_idx = customer_df.set_index('customer_id')
+            customer_idx = customer_df.set_index('customer_id').groupby(level=0).first()
+
 
             vehicle_df['vehicle_id'] = vehicle_df['vehicle_id'].astype(str)
-            vehicle_idx = vehicle_df.set_index('vehicle_id')
+            vehicle_idx  = vehicle_df.set_index('vehicle_id').groupby(level=0).first()
 
             # Count prior claims per customer once up front
             claim_df['customer_id'] = claim_df['customer_id'].astype(str)
@@ -131,15 +132,28 @@ class PolicyAgent:
             print(f"❌ Error loading data: {e}")
             import traceback
             traceback.print_exc()
+    @staticmethod
+    def _normalize_policy(val: str) -> str:
+        val = str(val).strip()
+        return val if val.startswith("POL-") else f"POL-{val}"
 
+    @staticmethod  
+    def _normalize_customer(val: str) -> str:
+        val = str(val).strip()
+        return val if val.startswith("CUST-") else f"CUST-{val}"
+    
     async def __call__(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Lookup policy with complete data"""
         
         policy_number = payload.get('policy_number')
         incident_date = payload.get('incident_date', '')
         incident_type = payload.get('incident_type', '')
-        claim_amount = payload.get('claim_amount', 0)
-        
+        claim_amount  = payload.get('claim_amount', 0)
+
+
+        if policy_number:
+            policy_number = self._normalize_policy(str(policy_number))
+
         # Check if policy exists
         if not policy_number or policy_number not in self.policy_data:
             return {
@@ -148,34 +162,37 @@ class PolicyAgent:
                 'errors': [f"Policy {policy_number} not found in database"],
                 'warnings': []
             }
-        
+
         # Get complete policy data
         result = self.policy_data[policy_number].copy()
-        
+
         # Validate incident date if provided
         if incident_date:
             try:
                 inc_date = datetime.strptime(incident_date, '%Y-%m-%d')
                 eff_date = datetime.strptime(result['effective_date'], '%Y-%m-%d') if result['effective_date'] and result['effective_date'] != 'nan' else None
                 exp_date = datetime.strptime(result['expiration_date'], '%Y-%m-%d') if result['expiration_date'] and result['expiration_date'] != 'nan' else None
-                
+
                 if eff_date and exp_date:
                     if eff_date <= inc_date <= exp_date:
                         result['incident_in_policy_period'] = True
                     else:
                         result['incident_in_policy_period'] = False
-                        result['errors'].append(f"Incident date {incident_date} outside policy period ({result['effective_date']} to {result['expiration_date']})")
+                        result['errors'].append(
+                            f"Incident date {incident_date} outside policy period "
+                            f"({result['effective_date']} to {result['expiration_date']})"
+                        )
                 else:
                     result['incident_in_policy_period'] = None
                     result['warnings'].append("Policy dates not available")
             except Exception as e:
                 result['incident_in_policy_period'] = None
                 result['warnings'].append(f"Could not validate incident date: {e}")
-        
+
         # Check for missing critical data
         critical_fields = ['deductible', 'csl', 'credit_score', 'telematics_score']
         missing_critical = [f for f in critical_fields if result.get(f) is None]
         if missing_critical:
             result['warnings'].append(f"Missing critical data: {', '.join(missing_critical)}")
-        
+
         return result
