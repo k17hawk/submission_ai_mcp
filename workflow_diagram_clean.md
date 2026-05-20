@@ -1,0 +1,31 @@
+```mermaid
+---
+config:
+_flowchart:
+_curve:_linear
+---
+graph_TD;
+	_start_[<p>_start_</p>]:::first
+	1\fe0f\20e3\20Extract\20Claim\20Fields\20\28Parser\20Agent\29Step1_Extract_Claim_Fields_Parser_Agent
+	2\fe0f\20e3\20Lookup\20\26\20Verify\20Policy\20\28Policy\20Agent\29Step2_Lookup_and_Verify_Policy_Policy_Agent
+	3\fe0f\20e3\20Assess\20Risk\20Rules\20\28Risk\20Agent\29Step3_Assess_Risk_Rules_Risk_Agent
+	4\fe0f\20e3\20Build\20Feature\20Vector\20\28Feature\20Agent\29Step4_Build_Feature_Vector_Feature_Agent
+	5\fe0f\20e3\20Detect\20Fraud\20Probability\20\28Fraud\20Agent\29Step5_Detect_Fraud_Probability_Fraud_Agent
+	6\fe0f\20e3\20Make\20Final\20Claim\20DecisionStep6_Make_Final_Claim_Decision
+	\274c\20Reject\20Claim\20\26\20Log\20ReasonReject_Reject_Claim_and_Log_Reason
+	_end_[<p>_end_</p>]:::last
+	1\fe0f\20e3\20Extract\20Claim\20Fields\20\28Parser\20Agent\29_-._andnbsp;continue_to_policyandnbsp;_.->_2\fe0f\20e3\20Lookup\20\26\20Verify\20Policy\20\28Policy\20Agent\29;
+	1\fe0f\20e3\20Extract\20Claim\20Fields\20\28Parser\20Agent\29_-._andnbsp;reject_claimandnbsp;_.->_\274c\20Reject\20Claim\20\26\20Log\20Reason;
+	2\fe0f\20e3\20Lookup\20\26\20Verify\20Policy\20\28Policy\20Agent\29_-._andnbsp;continue_to_riskandnbsp;_.->_3\fe0f\20e3\20Assess\20Risk\20Rules\20\28Risk\20Agent\29;
+	2\fe0f\20e3\20Lookup\20\26\20Verify\20Policy\20\28Policy\20Agent\29_-._andnbsp;reject_claimandnbsp;_.->_\274c\20Reject\20Claim\20\26\20Log\20Reason;
+	3\fe0f\20e3\20Assess\20Risk\20Rules\20\28Risk\20Agent\29_-->_4\fe0f\20e3\20Build\20Feature\20Vector\20\28Feature\20Agent\29;
+	4\fe0f\20e3\20Build\20Feature\20Vector\20\28Feature\20Agent\29_-->_5\fe0f\20e3\20Detect\20Fraud\20Probability\20\28Fraud\20Agent\29;
+	5\fe0f\20e3\20Detect\20Fraud\20Probability\20\28Fraud\20Agent\29_-->_6\fe0f\20e3\20Make\20Final\20Claim\20Decision;
+	_start_-->_1\fe0f\20e3\20Extract\20Claim\20Fields\20\28Parser\20Agent\29;
+	6\fe0f\20e3\20Make\20Final\20Claim\20Decision_-->_end_;
+	\274c\20Reject\20Claim\20\26\20Log\20Reason_-->_end_;
+	classDef_default_fill:#f2f0ff,line-height:1.2
+	classDef_first_fill-opacity:0
+	classDef_last_fill:#bfb6fc
+
+```

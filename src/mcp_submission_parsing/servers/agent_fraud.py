@@ -8,6 +8,22 @@ import sys
 from src.mcp_submission_parsing.config.logger_config import get_logger  
 logger = get_logger('fraud agent')
 
+
+import __main__
+from sklearn.base import BaseEstimator, TransformerMixin
+import numpy as np
+
+class QuestionMarkToNaN(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        return self
+    def transform(self, X):
+        X = X.copy()
+        return X.replace('?', np.nan)
+
+__main__.QuestionMarkToNaN = QuestionMarkToNaN
+
+
+
 class FraudAgent:
     """Detects fraud using ML model"""
     

@@ -1,0 +1,28 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	parse(parse)
+	policy(policy)
+	risk(risk)
+	features(features)
+	fraud(fraud)
+	decision(decision)
+	reject(reject)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> parse;
+	features --> fraud;
+	fraud --> decision;
+	parse -. &nbsp;continue&nbsp; .-> policy;
+	parse -.-> reject;
+	policy -.-> reject;
+	policy -. &nbsp;continue&nbsp; .-> risk;
+	risk --> features;
+	decision --> __end__;
+	reject --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
