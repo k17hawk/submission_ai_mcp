@@ -1,4 +1,3 @@
-# data/preprocess.py
 """
 One-time preprocessing of corpus, queries, and embeddings.
 Run this manually when data changes, not as part of server startup.
