@@ -1,4 +1,3 @@
-# src/lang_graph/state.py
 from typing import TypedDict, Optional, List, Any, Dict
 
 class ClaimProcessingState(TypedDict):

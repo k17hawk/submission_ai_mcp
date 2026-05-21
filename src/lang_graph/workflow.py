@@ -7,7 +7,6 @@ from src.lang_graph.node import (
      policy_lookup_agent, reject_claim_agent, risk_assessment_agent
 )
 
-# Helper functions for conditional routing
 def route_after_parsing(state: ClaimProcessingState) -> str:
     if not state.get("extraction_success") or not state.get("parsed_claim"):
         return "reject"

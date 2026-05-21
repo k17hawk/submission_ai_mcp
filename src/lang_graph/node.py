@@ -6,7 +6,7 @@ from src.mcp_submission_parsing.servers.agent_policy import PolicyAgent
 from src.mcp_submission_parsing.servers.agent_risk import RiskAgent
 from src.mcp_submission_parsing.servers.agent_features import FeatureAgent
 from src.mcp_submission_parsing.servers.agent_fraud import FraudAgent
-
+import json
 # Lazy initialisation
 _parser = None
 _policy = None
@@ -44,9 +44,6 @@ def get_fraud():
         _fraud = FraudAgent()
     return _fraud
 
-# ----------------------------------------------------------------------
-# Helper to reconstruct dataclasses from dictionaries when needed
-# ----------------------------------------------------------------------
 def _dict_to_parsed_claim(d: dict):
     from src.mcp_submission_parsing.common.models import ParsedClaim
     return ParsedClaim(**d) if d else None
@@ -179,8 +176,9 @@ async def feature_building_agent(state: ClaimProcessingState) -> dict:
     
     from src.mcp_submission_parsing.common.models import FeatureVector
     feat_obj = FeatureVector(**result)
-    feat_dict = feat_obj.to_dict()   # ✅ store dict
-    
+    feat_dict = feat_obj.to_dict()   
+
+    feat_dict = json.loads(json.dumps(feat_dict, default=str))
     return {
         "feature_vector": feat_dict,
         "processing_time_ms": (time.time() - start) * 1000
@@ -195,14 +193,14 @@ async def fraud_detection_agent(state: ClaimProcessingState) -> dict:
     
     fraud_agent = get_fraud()
     result = await fraud_agent({
-        "features": feat_dict["features"],   # dict already
+        "features": feat_dict["features"],  
         "claim_text": state["claim_text"]
     })
     
     from src.mcp_submission_parsing.common.models import FraudPrediction
     fraud_obj = FraudPrediction(**result)
     fraud_dict = fraud_obj.to_dict()   # ✅ store dict
-    
+    fraud_dict = json.loads(json.dumps(fraud_dict, default=str))
     return {
         "fraud_prediction": fraud_dict,
         "processing_time_ms": (time.time() - start) * 1000
