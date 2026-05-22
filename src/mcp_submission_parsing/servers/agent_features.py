@@ -24,7 +24,6 @@ class FeatureAgent:
             'witnesses', 'police_report_available', 'total_claim_amount',
             'prior_claims_count', 'auto_make', 'auto_year', 'injury_claim',
             'property_claim', 'vehicle_claim',
-            # Additional columns required by model:
             'policy_csl', 'incident_state', 'umbrella_limit', 'capital_gains',
             'incident_near_boundary', 'capital_loss', 'insured_hobbies',
             'incident_location', 'insured_relationship'
@@ -60,7 +59,7 @@ class FeatureAgent:
         
         logger.debug(f"Default values configured for {len(self.defaults)} fields")
         
-        # Mapping for incident_location to valid categories
+        #mapping for normalizing incident_location to a fixed set of categories
         self.location_mapping = {
             'i-95': 'Interstate',
             'i-': 'Interstate',
