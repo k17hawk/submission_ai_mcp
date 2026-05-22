@@ -10,10 +10,10 @@ from dataclasses import dataclass, asdict
 class User:
     name: str
     age: int
-    email: str = ""  # Optional field with default value
+    email: str = "" 
 
 user = User(name="Alice", age=30)
-print(user)  # Output: User(name='Alice', age=30, email='')   
+print(user) 
 
 class MessageType(str, Enum):
     REQUEST = "REQUEST"

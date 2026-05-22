@@ -15,10 +15,9 @@ class EmbeddingModel:
         return cls._instance
 
     def _load_model(self):
-        # TODO: load sentence-transformers model once
         self.model = None
 
     def encode(self, texts: list) -> list:
         """Encode texts into embeddings."""
-        # TODO: implement
+        # TODO:
         return []
