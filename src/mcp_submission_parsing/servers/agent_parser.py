@@ -27,8 +27,7 @@ class ParserAgent:
 
     def __init__(self):
         logger.info("Initializing ParserAgent")
-        
-        # Load full configuration
+
         try:
             self.config = load_config()
             patterns = get_patterns()
@@ -39,7 +38,6 @@ class ParserAgent:
             logger.error(f"Failed to load configuration: {e}", exc_info=True)
             raise
 
-        # Initialize helper classes
         self.regex_extractor = RegexExtractor(patterns)
         self.field_normalizer = FieldNormalizer(normalizer_config)
         self.internal_only_fields = {
@@ -50,7 +48,6 @@ class ParserAgent:
         }
         logger.debug(f"Internal-only fields: {self.internal_only_fields}")
 
-        # Fields that require special post-processing (derived or custom logic)
         self.derived_fields = {
             'incident_hour_of_the_day': self._derive_incident_hour,
             'police_report_available': self._normalize_police_report,
@@ -64,7 +61,6 @@ class ParserAgent:
         }
         logger.debug(f"Registered {len(self.derived_fields)} derived field handlers")
 
-        # Track which fields come from patterns
         self.pattern_fields = list(patterns.keys())
         logger.info(f"ParserAgent initialized successfully with {len(self.pattern_fields)} pattern fields")
 
@@ -75,9 +71,7 @@ class ParserAgent:
 
         text = payload.get('text', '')
         use_llm = payload.get('use_llm', False)
-        force_llm_enhancement = payload.get('force_llm_enhancement', False)  # New flag for testing/forcing LLM
-        # Allow caller to pass submission time explicitly (for testing or API ingestion).
-        # Falls back to datetime.now() if not provided.
+        force_llm_enhancement = payload.get('force_llm_enhancement', False)  
         submission_time: datetime = payload.get('submission_time', datetime.now())
 
         logger.debug(f"Text length: {len(text)} characters")
@@ -93,17 +87,13 @@ class ParserAgent:
                 'extraction_confidence': 0.0
             }
 
-        # Step 1: Extract all fields using regex patterns
         logger.info("Step 1: Extracting fields using regex patterns")
         extracted = self._extract_all_fields(text)
         logger.debug(f"Regex extraction complete. Extracted {len(extracted)} fields: {list(extracted.keys())}")
 
-        # Step 2: Apply normalisation / post-processing
         logger.info("Step 2: Applying post-processing and normalization")
         extracted = self._post_process_fields(extracted, text, submission_time)
         logger.debug(f"Post-processing complete. Final fields: {list(extracted.keys())}")
-
-        # Step 3: Determine required fields (from config)
         required_fields = self.config.get('required_fields', [
             'policy_number', 'incident_date', 'incident_type', 'auto_make'
         ])
@@ -111,7 +101,6 @@ class ParserAgent:
         logger.info(f"Required fields: {required_fields}")
         logger.info(f"Missing required fields: {missing}")
 
-        # Step 4: Compute confidence — based on pattern fields minus internal-only ones
         scoreable_fields = [f for f in self.pattern_fields if f not in self.internal_only_fields]
         total_possible = len(scoreable_fields)
         extracted_count = sum(1 for f in scoreable_fields if extracted.get(f))
@@ -166,8 +155,6 @@ class ParserAgent:
                         llm_filled_count += 1
                         logger.info(f"LLM filled missing field '{key}' with value '{value}'")
                     elif force_llm_enhancement and str(existing_value) != str(value):
-                        # When forcing LLM, we can override existing values if LLM provides something
-                        # You might want to add confidence comparison logic here
                         extracted[key] = value
                         result[key] = value
                         llm_overrode_count += 1
@@ -186,9 +173,6 @@ class ParserAgent:
         logger.info(f"Parsing complete. Success: {result['extraction_success']}, Confidence: {result['extraction_confidence']}")
         return result
 
-    # -------------------------------------------------------------------------
-    # Extraction
-    # -------------------------------------------------------------------------
 
     def _extract_all_fields(self, text: str) -> Dict[str, Any]:
         """Extract all fields defined in patterns using RegexExtractor"""
