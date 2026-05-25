@@ -209,7 +209,7 @@ class PolicyAgent:
             policy_number = self._normalize_policy(str(policy_number))
             logger.info(f"Normalized policy number: {policy_number}")
 
-        # Check if policy exists
+        # check if policy exists
         if not policy_number or policy_number not in self.policy_data:
             logger.warning(f"Policy {policy_number} not found in database")
             return {
@@ -220,11 +220,11 @@ class PolicyAgent:
             }
 
         logger.info(f"Policy {policy_number} found, retrieving data")
-        # Get complete policy data
+        # get complete policy data
         result = self.policy_data[policy_number].copy()
         logger.debug(f"Retrieved policy data for {policy_number}: Status={result.get('policy_status')}, Active={result.get('is_active')}")
 
-        # Validate incident date if provided
+        # validate incident date if provided
         if incident_date:
             logger.info(f"Validating incident date {incident_date} for policy {policy_number}")
             try:
@@ -252,7 +252,7 @@ class PolicyAgent:
                 result['warnings'].append(warning_msg)
                 logger.error(f"Policy {policy_number}: {warning_msg}", exc_info=True)
 
-        # Check for missing critical data
+        # check for missing critical data
         critical_fields = ['deductible', 'csl', 'credit_score', 'telematics_score']
         missing_critical = [f for f in critical_fields if result.get(f) is None]
         if missing_critical:

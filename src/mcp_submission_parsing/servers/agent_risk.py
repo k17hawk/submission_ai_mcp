@@ -22,13 +22,12 @@ class RiskAgent:
         logger.info("Initializing RiskAgent")
         
         if config_path is None:
-            # Try to find it relative to this file or in common config folder
+
             base_path = Path(__file__).parent.parent / 'config' / 'risk_rules.yaml'
             if base_path.exists():
                 config_path = str(base_path)
                 logger.debug(f"Found config file at: {config_path}")
             else:
-                # Fallback to local directory
                 config_path = 'risk_rules.yaml'
                 logger.debug(f"No config found in default location, falling back to: {config_path}")
         
@@ -421,10 +420,7 @@ class RiskAgent:
                 logger.debug(f"not_between (normal range): {val} not between {low} and {high} -> {result}")
                 return result
             else:
-                # Wrap-around range: e.g., 23 to 5 means 23,0,1,2,3,4,5
-                # Actually not_between: we want to return True if NOT in [low, high] wrap.
-                # For late-night: low=23, high=5. The "bad" hours are 23,0,1,2,3,4,5.
-                # So condition passes (not between) if hour is 6..22.
+            
                 if val >= low or val <= high:
                     result = False
                 else:
@@ -470,6 +466,5 @@ class RiskAgent:
                     result = result.replace(placeholder, str(value))
                     logger.debug(f"Replaced {placeholder} with {value}")
         
-        # Also handle {days_diff} which might be computed on the fly – you can add more sophisticated rendering if needed
         logger.debug(f"Final rendered message: {result}")
         return result
