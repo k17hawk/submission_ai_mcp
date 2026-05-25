@@ -72,7 +72,7 @@ class MCPServer(MCPServerProtocol):
         logger.info(f"Starting MCP Server on {self.host}:{self.port}")
         print(f"🚀 Starting MCP Server on {self.host}:{self.port}")
         
-        # Using stdio for simplicity (can be replaced with HTTP/WebSocket)
+        # using stdio for simplicity (can be replaced with HTTP/WebSocket)
         print("📡 Server running in stdio mode")
         print("✅ Ready to accept requests")
         logger.info("Server running in stdio mode")
@@ -215,7 +215,7 @@ class MCPServer(MCPServerProtocol):
         
         logger.info(f"Pipeline inputs - Claim length: {len(claim_text)} chars, Customer: {customer_name} (ID: {customer_id})")
         
-        # Stage 1: Parse claim
+        # parse claim
         logger.info(f"[Stage 1/5] Starting claim parsing for request {request_id}")
         stage_start = time.time()
         
@@ -239,7 +239,7 @@ class MCPServer(MCPServerProtocol):
         
         logger.info(f"Extracted policy number: {parsed_claim.policy_number}")
         
-        # Stage 2: Lookup policy
+        #lookup policy
         logger.info(f"[Stage 2/5] Looking up policy {parsed_claim.policy_number} for request {request_id}")
         stage_start = time.time()
         

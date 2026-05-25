@@ -27,7 +27,7 @@ class ParserAgent:
         patterns = get_patterns()
         normalizer_config = get_normalizer_config()
 
-        # Initialize helper classes
+        # constructor
         self.regex_extractor = RegexExtractor(patterns)
         self.field_normalizer = FieldNormalizer(normalizer_config)
         self.internal_only_fields = {
@@ -37,7 +37,7 @@ class ParserAgent:
             'city_state',
         }
 
-        # Fields that require special post-processing (derived or custom logic)
+        # for post processing  fields
         self.derived_fields = {
             'incident_hour_of_the_day': self._derive_incident_hour,
             'police_report_available': self._normalize_police_report,
@@ -50,7 +50,7 @@ class ParserAgent:
             'incident_date': self._normalize_date,
         }
 
-        # Track which fields come from patterns
+        #tracking
         self.pattern_fields = list(patterns.keys())
 
     async def __call__(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -66,19 +66,19 @@ class ParserAgent:
                 'extraction_confidence': 0.0
             }
 
-        # Step 1: Extract all fields using regex patterns
+        #regex extraction
         extracted = self._extract_all_fields(text)
 
-        # Step 2: Apply normalisation / post-processing
+        # normalization and derived fields
         extracted = self._post_process_fields(extracted, text)
 
-        # Step 3: Determine required fields (from config)
+        # determine missing critical fields based on config
         required_fields = self.config.get('required_fields', [
             'policy_number', 'incident_date', 'incident_type', 'auto_make'
         ])
         missing = [f for f in required_fields if not extracted.get(f)]
 
-        # Step 4: Compute confidence — based on pattern fields minus internal-only ones
+        # confidence scoring
         scoreable_fields = [f for f in self.pattern_fields if f not in self.internal_only_fields]
         total_possible = len(scoreable_fields)
         extracted_count = sum(1 for f in scoreable_fields if extracted.get(f))
@@ -94,7 +94,7 @@ class ParserAgent:
             'total_possible_fields': total_possible,
         }
 
-        # Step 5: LLM enhancement for missing critical fields (optional)
+        #LLM enhancement for missing critical fields
         if use_llm and missing:
             llm_fields = await self._extract_with_llm(text, missing)
             for key, value in llm_fields.items():
