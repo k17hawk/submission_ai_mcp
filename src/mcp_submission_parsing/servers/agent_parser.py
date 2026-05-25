@@ -177,7 +177,6 @@ class ParserAgent:
     def _extract_all_fields(self, text: str) -> Dict[str, Any]:
         """Extract all fields defined in patterns using RegexExtractor"""
         logger.debug("Starting regex extraction for all fields")
-        # Always derived via custom logic — never taken raw from regex
         always_derived = {'incident_hour_of_the_day'}
         result = {}
         
@@ -210,10 +209,6 @@ class ParserAgent:
             logger.debug("Using current time as submission_time")
             
         processed = extracted.copy()
-
-        # ------------------------------------------------------------------
-        # 0. Pileup / multi-vehicle detection from raw text.
-        # ------------------------------------------------------------------
         if not processed.get('incident_type') or processed.get('incident_type', '').isdigit():
             logger.debug("Checking for pileup/multi-vehicle pattern in text")
             if re.search(
@@ -223,9 +218,6 @@ class ParserAgent:
                 processed['incident_type'] = 'Multi-vehicle Collision'
                 logger.info(f"Detected multi-vehicle incident, set incident_type to '{processed['incident_type']}'")
 
-        # ------------------------------------------------------------------
-        # 1. Standard normalisation using FieldNormalizer
-        # ------------------------------------------------------------------
         logger.debug("Applying standard normalization using FieldNormalizer")
         for field, value in list(processed.items()):
             if field in self.internal_only_fields:
@@ -254,9 +246,6 @@ class ParserAgent:
                 processed[field] = normalized
                 logger.debug(f"Updated field '{field}' to normalized value '{normalized}'")
 
-        # ------------------------------------------------------------------
-        # 2. Special / derived fields
-        # ------------------------------------------------------------------
         logger.debug("Processing derived fields")
         for derived_field, handler in self.derived_fields.items():
             if derived_field == 'incident_hour_of_the_day':
@@ -269,19 +258,12 @@ class ParserAgent:
             logger.debug(f"Calling handler for derived field '{derived_field}'")
             handler(processed, text, submission_time)
 
-        # ------------------------------------------------------------------
-        # 3. Policy number prefix cleanup (ensure POL-XXXXXX)
-        # ------------------------------------------------------------------
         if 'policy_number' in processed:
             original = processed['policy_number']
             pn = processed['policy_number']
             pn = re.sub(r'^POL[-\s]?', '', pn, flags=re.IGNORECASE)
             processed['policy_number'] = f"POL-{pn}"
             logger.debug(f"Cleaned policy_number: '{original}' -> '{processed['policy_number']}'")
-
-        # ------------------------------------------------------------------
-        # 4. Customer ID prefix cleanup
-        # ------------------------------------------------------------------
         if 'customer_id' in processed:
             original = processed['customer_id']
             cid = processed['customer_id']
@@ -292,10 +274,6 @@ class ParserAgent:
                 cid = re.sub(r'^CUST[-\s]?', '', cid, flags=re.IGNORECASE)
                 processed['customer_id'] = f"CUST-{cid}"
                 logger.debug(f"Reformatted customer_id: '{original}' -> '{processed['customer_id']}'")
-
-        # ------------------------------------------------------------------
-        # 5. Customer name: strip trailing context words
-        # ------------------------------------------------------------------
         if 'customer_name' in processed:
             original = processed['customer_name']
             name = processed['customer_name']
@@ -303,9 +281,6 @@ class ParserAgent:
             processed['customer_name'] = name.strip().rstrip(',;:')
             logger.debug(f"Cleaned customer_name: '{original}' -> '{processed['customer_name']}'")
 
-        # ------------------------------------------------------------------
-        # 6. incident_state: must be exactly a 2-letter uppercase state code.
-        # ------------------------------------------------------------------
         state = processed.get('incident_state', '')
         valid_states = set(self.config.get('valid_values', {}).get('incident_state', []))
         if not re.fullmatch(r'[A-Z]{2}', str(state)) or (valid_states and state not in valid_states):
@@ -321,15 +296,6 @@ class ParserAgent:
                 processed.pop('incident_state', None)
                 logger.debug("No valid incident_state found in text")
 
-        # ------------------------------------------------------------------
-        # 7. incident_location: removed the override that set raw highway code.
-        #    Now relies solely on FieldNormalizer mapping (e.g., I-95 -> Interstate).
-        # ------------------------------------------------------------------
-        # The old override block has been removed. The normalized value from step 1 remains.
-
-        # ------------------------------------------------------------------
-        # 8. incident_city: strip trailing conjunctions/noise.
-        # ------------------------------------------------------------------
         if 'incident_city' in processed:
             original = processed['incident_city']
             city = processed['incident_city']
@@ -337,9 +303,6 @@ class ParserAgent:
             processed['incident_city'] = city if len(city) >= 2 else processed.pop('incident_city', None)
             logger.debug(f"Cleaned incident_city: '{original}' -> '{processed.get('incident_city', 'REMOVED')}'")
 
-        # ------------------------------------------------------------------
-        # 9. auto_model: drop noise values that aren't real model names.
-        # ------------------------------------------------------------------
         if 'auto_model' in processed:
             model = processed['auto_model']
             noise = {'was involved', 'involved', 'the vehicle', 'a vehicle'}
@@ -347,9 +310,6 @@ class ParserAgent:
                 processed.pop('auto_model', None)
                 logger.debug(f"Removed invalid auto_model '{model}' (noise or invalid format)")
 
-        # ------------------------------------------------------------------
-        # 10. total_claim_amount: ensure it's a float, not a raw string.
-        # ------------------------------------------------------------------
         if 'total_claim_amount' in processed:
             val = processed['total_claim_amount']
             if not isinstance(val, float):
@@ -380,10 +340,6 @@ class ParserAgent:
                     processed['police_report_available'] = 'NO'
                     logger.debug("Set to 'NO' based on pattern match")
 
-        # ------------------------------------------------------------------
-        # 12. Integer fields: ensure witnesses, bodily_injuries,
-        #     number_of_vehicles are stored as int, not string.
-        # ------------------------------------------------------------------
         for int_field in ('witnesses', 'bodily_injuries', 'number_of_vehicles'):
             if int_field in processed:
                 try:
@@ -394,9 +350,6 @@ class ParserAgent:
                     logger.debug(f"Failed to convert {int_field} '{processed[int_field]}', removing field")
                     processed.pop(int_field, None)
 
-        # ------------------------------------------------------------------
-        # 13. Remove internal-only pattern keys from the final output.
-        # ------------------------------------------------------------------
         removed_fields = []
         for field in self.internal_only_fields:
             if field in processed:
@@ -411,7 +364,6 @@ class ParserAgent:
 
     def _normalize_auto_year(self, extracted: Dict, text: str, submission_time=None):
         """Ensure auto_year is a valid integer, preferring vehicle-specific year over date year."""
-        # If year_make_model exists, use that as the primary source
         if 'year_make_model' in extracted and extracted['year_make_model']:
             try:
                 year = int(str(extracted['year_make_model']).strip())
@@ -425,15 +377,13 @@ class ParserAgent:
                     return
             except (ValueError, TypeError):
                 pass
-        
-        # Otherwise, fall back to existing auto_year with date conflict check
+
         if 'auto_year' in extracted:
             year = extracted['auto_year']
             try:
                 year_int = int(str(year).replace(',', ''))
                 current_year = datetime.now().year
                 
-                # Reject if this year matches the incident_date year
                 inc_date = extracted.get('incident_date')
                 if inc_date and isinstance(inc_date, str) and len(inc_date) >= 4:
                     date_year = int(inc_date[:4])
@@ -449,10 +399,6 @@ class ParserAgent:
             except (ValueError, TypeError):
                 extracted.pop('auto_year', None)
 
-    # -------------------------------------------------------------------------
-    # Derived field handlers
-    # -------------------------------------------------------------------------
-
     def _derive_incident_hour(self, extracted: Dict, text: str, submission_time: datetime = None):
         """
         Derive incident_hour_of_the_day from:
@@ -465,7 +411,6 @@ class ParserAgent:
             submission_time = datetime.now()
             logger.debug("Using current time as submission_time")
 
-        # Try incident_time pattern first
         time_val, _ = self.regex_extractor.extract('incident_time', text)
         if time_val:
             logger.debug(f"Found incident_time: '{time_val}'")
@@ -487,8 +432,6 @@ class ParserAgent:
                 extracted['incident_hour_of_the_day'] = hour
                 logger.info(f"Derived hour from explicit time: {time_match.group(0)} -> hour {hour}")
                 return
-
-        # Check raw text for "X hours ago"
         raw_hours_ago = re.search(r'(\d+)\s*hours?\s+ago', text, re.IGNORECASE)
         if raw_hours_ago:
             hour = (submission_time.hour - int(raw_hours_ago.group(1))) % 24
@@ -496,7 +439,6 @@ class ParserAgent:
             logger.info(f"Derived hour from raw text 'hours ago': {raw_hours_ago.group(1)} hours ago -> hour {hour}")
             return
 
-        # Fallback: direct hour pattern
         hour_val, _ = self.regex_extractor.extract('incident_hour_of_the_day', text)
         if hour_val:
             try:
@@ -583,10 +525,6 @@ class ParserAgent:
                 logger.debug(f"Normalized incident_date: '{original}' -> '{norm_date}'")
             else:
                 logger.debug(f"Failed to normalize incident_date '{original}'")
-
-    # -------------------------------------------------------------------------
-    # LLM fallback
-    # -------------------------------------------------------------------------
 
     async def _extract_with_llm(self, text: str, missing_fields: List[str]) -> Dict[str, Any]:
         """Use LLM only for truly missing critical fields"""
