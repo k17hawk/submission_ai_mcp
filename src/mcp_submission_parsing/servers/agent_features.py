@@ -176,7 +176,6 @@ class FeatureAgent:
                 else:
                     logger.debug(f"{col} not found in parsed, verification, or policy")
             
-            # If still None, use default
             if value is None:
                 value = self.defaults.get(col)
                 if value is not None:
@@ -185,7 +184,6 @@ class FeatureAgent:
                 else:
                     logger.warning(f"No default value found for {col}, setting to None")
             
-            # Type conversion
             if col in ['auto_year', 'bodily_injuries', 'witnesses', 
                        'prior_claims_count', 'incident_hour_of_the_day', 'incident_near_boundary']:
                 try:
@@ -226,8 +224,7 @@ class FeatureAgent:
         
         logger.info(f"Feature construction complete - {len(features)} features built")
         logger.info(f"Imputed {len(imputed_fields)} fields: {imputed_fields}")
-        
-        # Additional derived features (not in feature_columns but used later)
+
         logger.debug("Computing derived features")
         
         features['incident_in_policy_period'] = verification.get('incident_in_policy_period', False)

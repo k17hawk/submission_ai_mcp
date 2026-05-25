@@ -22,8 +22,6 @@ class QuestionMarkToNaN(BaseEstimator, TransformerMixin):
 
 __main__.QuestionMarkToNaN = QuestionMarkToNaN
 
-
-
 class FraudAgent:
     """Detects fraud using ML model"""
     
@@ -59,14 +57,11 @@ class FraudAgent:
         claim_text = payload.get('claim_text', '')
         logger.debug(f"Fraud detection called with claim_text length: {len(claim_text)}, features keys: {list(features.keys())}")
         
-        # Use ML model if available
         if self.model:
             try:
-                # Prepare DataFrame
                 X = pd.DataFrame([features])
                 logger.debug("Prepared feature DataFrame for ML prediction")
                 
-                # Get prediction
                 proba = self.model.predict_proba(X)[0, 1]
                 fraud_prob = float(proba)
                 logger.info(f"ML prediction completed: fraud_probability = {fraud_prob:.4f}")
@@ -78,8 +73,7 @@ class FraudAgent:
         else:
             logger.info("No ML model available, using rule-based fallback")
             fraud_prob = self._rule_based_fraud_score(features, claim_text)
-        
-        # Determine flag and risk level
+    
         fraud_flag = "Y" if fraud_prob >= self.threshold else "N"
         
         if fraud_prob >= 0.75:
@@ -108,30 +102,24 @@ class FraudAgent:
         logger.debug("Computing rule-based fraud score")
         score = 0.0
         
-        # High claim amount
         total_claim = features.get('total_claim_amount', 0)
         if total_claim > 25000:
             score += 0.3
             logger.debug(f"High claim amount ${total_claim}: +0.3")
         
-        # Late night incident
         hour = features.get('incident_hour_of_the_day', 12)
         if hour >= 23 or hour <= 5:
             score += 0.2
             logger.debug(f"Late night incident hour {hour}: +0.2")
         
-        # No police report for large claim
         if total_claim > 5000 and features.get('police_report_available') != 'YES':
             score += 0.25
             logger.debug(f"Large claim ${total_claim} without police report: +0.25")
         
-        # Multiple prior claims
         prior_claims = features.get('prior_claims_count', 0)
         if prior_claims > 2:
             score += 0.15
             logger.debug(f"Multiple prior claims ({prior_claims}): +0.15")
-        
-        # No witnesses
         witnesses = features.get('witnesses', 0)
         vehicles = features.get('number_of_vehicles_involved', 1)
         if witnesses == 0 and vehicles > 1:
