@@ -94,7 +94,6 @@ class ParserAgent:
             'total_possible_fields': total_possible,
         }
 
-        #LLM enhancement for missing critical fields
         if use_llm and missing:
             llm_fields = await self._extract_with_llm(text, missing)
             for key, value in llm_fields.items():
@@ -138,12 +137,6 @@ class ParserAgent:
         """
         processed = extracted.copy()
 
-        # ------------------------------------------------------------------
-        # 0. Pileup / multi-vehicle detection from raw text.
-        #    The pileup regex pattern has no capture group (intentionally),
-        #    so the extractor won't populate incident_type for "2-car pileup".
-        #    We check raw text and set the canonical value directly.
-        # ------------------------------------------------------------------
         if not processed.get('incident_type') or processed.get('incident_type', '').isdigit():
             if re.search(
                 r'\d+[-\s]?(?:car|vehicle)s?\s+(?:pileup|collision|accident|crash)',
@@ -151,9 +144,6 @@ class ParserAgent:
             ):
                 processed['incident_type'] = 'Multi-vehicle Collision'
 
-        # ------------------------------------------------------------------
-        # 1. Standard normalisation using FieldNormalizer
-        # ------------------------------------------------------------------
         for field, value in list(processed.items()):
             if field in self.internal_only_fields:
                 continue  # handled separately below
@@ -174,38 +164,25 @@ class ParserAgent:
             if normalized is not None:
                 processed[field] = normalized
 
-        # ------------------------------------------------------------------
-        # 2. Special / derived fields
-        # ------------------------------------------------------------------
+
         for derived_field, handler in self.derived_fields.items():
             # Skip if already present and non-empty
             if derived_field in processed and processed[derived_field] is not None:
                 continue
             handler(processed, text)
 
-        # ------------------------------------------------------------------
-        # 3. Policy number prefix cleanup (ensure POL-XXXXXX)
-        # ------------------------------------------------------------------
+
         if 'policy_number' in processed:
             pn = processed['policy_number']
             pn = re.sub(r'^POL[-\s]?', '', pn, flags=re.IGNORECASE)
             processed['policy_number'] = f"POL-{pn}"
 
-        # ------------------------------------------------------------------
-        # 4. Customer ID prefix cleanup — handled in step 7f below
-        # ------------------------------------------------------------------
-
-        # ------------------------------------------------------------------
-        # 5. Customer name: strip trailing context words
-        # ------------------------------------------------------------------
         if 'customer_name' in processed:
             name = processed['customer_name']
             name = re.sub(r'\s+(?:with|CUST[-\w]*|policy[-\w]*).*$', '', name, flags=re.IGNORECASE)
             processed['customer_name'] = name.strip().rstrip(',;:')
 
-        # ------------------------------------------------------------------
-        # 6. incident_state: must be exactly a 2-letter uppercase state code.
-        # ------------------------------------------------------------------
+
         state = processed.get('incident_state', '')
         valid_states = set(self.config.get('valid_values', {}).get('incident_state', []))
         if not re.fullmatch(r'[A-Z]{2}', str(state)) or (valid_states and state not in valid_states):
@@ -218,33 +195,23 @@ class ParserAgent:
             else:
                 processed.pop('incident_state', None)
 
-        # ------------------------------------------------------------------
-        # 7. incident_location: prefer specific code like "I-95" over generic.
-        # ------------------------------------------------------------------
+
         raw_location, _ = self.regex_extractor.extract('incident_location', text)
         if raw_location and re.match(r'^I-\d+$', raw_location.strip()):
             processed['incident_location'] = raw_location.strip()
 
-        # ------------------------------------------------------------------
-        # 7b. incident_city: strip trailing conjunctions/noise.
-        # ------------------------------------------------------------------
         if 'incident_city' in processed:
             city = processed['incident_city']
             city = re.sub(r'\s+(?:and|the|or|at|in|near)\b.*$', '', city, flags=re.IGNORECASE).strip().rstrip(',;:')
             processed['incident_city'] = city if len(city) >= 2 else processed.pop('incident_city', None)
 
-        # ------------------------------------------------------------------
-        # 7c. auto_model: drop noise values that aren't real model names.
-        # ------------------------------------------------------------------
         if 'auto_model' in processed:
             model = processed['auto_model']
             noise = {'was involved', 'involved', 'the vehicle', 'a vehicle'}
             if model.lower() in noise or len(model.split()) > 3 or not re.match(r'^[A-Z]', model):
                 processed.pop('auto_model', None)
 
-        # ------------------------------------------------------------------
-        # 7d. total_claim_amount: ensure it's a float, not a raw string.
-        # ------------------------------------------------------------------
+
         if 'total_claim_amount' in processed:
             val = processed['total_claim_amount']
             if not isinstance(val, float):
@@ -254,9 +221,6 @@ class ParserAgent:
                 else:
                     processed.pop('total_claim_amount', None)
 
-        # ------------------------------------------------------------------
-        # 7e. police_report_available: normalize raw match to YES / NO / ?
-        # ------------------------------------------------------------------
         if 'police_report_available' in processed:
             val = processed['police_report_available']
             if val not in ('YES', 'NO', '?'):
@@ -268,9 +232,6 @@ class ParserAgent:
                 elif re.search(r'no\s+police\s+report', str(val), re.IGNORECASE):
                     processed['police_report_available'] = 'NO'
 
-        # ------------------------------------------------------------------
-        # 7f. customer_id: ensure CUST-XXXXX format (pattern captures digits only).
-        # ------------------------------------------------------------------
         if 'customer_id' in processed:
             cid = processed['customer_id']
             if not cid.upper().startswith('CUST'):
@@ -279,10 +240,6 @@ class ParserAgent:
                 cid = re.sub(r'^CUST[-\s]?', '', cid, flags=re.IGNORECASE)
                 processed['customer_id'] = f"CUST-{cid}"
 
-        # ------------------------------------------------------------------
-        # 8. Integer fields: ensure witnesses, bodily_injuries,
-        #    number_of_vehicles are stored as int, not string.
-        # ------------------------------------------------------------------
         for int_field in ('witnesses', 'bodily_injuries', 'number_of_vehicles'):
             if int_field in processed:
                 try:
@@ -290,18 +247,11 @@ class ParserAgent:
                 except (ValueError, TypeError):
                     processed.pop(int_field, None)
 
-        # ------------------------------------------------------------------
-        # 9. Remove internal-only pattern keys from the final output.
-        #    These were used only as intermediate extraction helpers.
-        # ------------------------------------------------------------------
         for field in self.internal_only_fields:
             processed.pop(field, None)
 
         return processed
 
-    # -------------------------------------------------------------------------
-    # Derived field handlers
-    # -------------------------------------------------------------------------
 
     def _derive_incident_hour(self, extracted: Dict, text: str):
         """
@@ -331,7 +281,6 @@ class ParserAgent:
                 extracted['incident_hour_of_the_day'] = hour
                 return
 
-        # Also check raw text for "X hours ago" in case incident_time pattern didn't fire
         raw_hours_ago = re.search(r'(\d+)\s*hours?\s+ago', text, re.IGNORECASE)
         if raw_hours_ago:
             current_hour = datetime.now().hour
@@ -339,7 +288,6 @@ class ParserAgent:
             extracted['incident_hour_of_the_day'] = hour
             return
 
-        # Fallback: direct hour pattern
         hour_val, _ = self.regex_extractor.extract('incident_hour_of_the_day', text)
         if hour_val:
             try:
@@ -375,15 +323,6 @@ class ParserAgent:
                 if normalized:
                     extracted['total_claim_amount'] = normalized
 
-    def _normalize_int_fields(self, extracted: Dict, text: str):
-        """
-        Convert integer fields to int.
-        This handler is registered for each int field individually but
-        the actual conversion is done in bulk in _post_process_fields (step 8).
-        This method exists so the derived_fields dispatch table is consistent.
-        """
-        pass  # Bulk conversion handled in _post_process_fields step 8
-
     def _normalize_auto_year(self, extracted: Dict, text: str):
         """Ensure auto_year is a valid integer within a reasonable range"""
         if 'auto_year' in extracted:
@@ -411,9 +350,6 @@ class ParserAgent:
             if norm_date:
                 extracted['incident_date'] = norm_date
 
-    # -------------------------------------------------------------------------
-    # LLM fallback
-    # -------------------------------------------------------------------------
 
     async def _extract_with_llm(self, text: str, missing_fields: List[str]) -> Dict[str, Any]:
         """Use LLM only for truly missing critical fields"""
