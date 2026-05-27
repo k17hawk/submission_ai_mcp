@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Configure base logger for the module
+
 def setup_logger(
     name: str = "mcp_submission_parsing",
     level: int = logging.DEBUG,
@@ -25,11 +25,9 @@ def setup_logger(
     logger = logging.getLogger(name)
     logger.setLevel(level)
     
-    # Avoid adding multiple handlers if logger already configured
     if logger.handlers:
         return logger
     
-    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
     
@@ -41,7 +39,6 @@ def setup_logger(
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     
-    # Optional file handler
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
@@ -50,8 +47,6 @@ def setup_logger(
     
     return logger
 
-
-# Create default logger instance
 default_logger = setup_logger("mcp_submission_parsing")
 
 

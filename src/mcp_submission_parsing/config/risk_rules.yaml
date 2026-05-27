@@ -1,6 +1,5 @@
 
 rules:
-  # ── CRITICAL ──────────────────────────────────────────────────────────────
   - rule_id: "R001"
     name: "Policy Must Be Active"
     description: "Policy status must be Active at time of incident"
@@ -23,7 +22,6 @@ rules:
     action_on_fail: "DENY"
     fail_message: "Incident date {parsed.incident_date} is outside policy period ({verification.effective_date} to {verification.expiration_date})"
 
-  # ── HIGH ──────────────────────────────────────────────────────────────────
   - rule_id: "R003"
     name: "Coverage Type Match"
     description: "Incident type must be covered by policy coverage code"
@@ -47,7 +45,6 @@ rules:
     action_on_fail: "REFER_TO_ADJUSTER"
     fail_message: "Claim ${parsed.total_claim_amount} exceeds coverage limit ${verification.coverage_limit}"
 
-  # ── MEDIUM ────────────────────────────────────────────────────────────────
   - rule_id: "R005"
     name: "Not Within 30 Days of Policy Start"
     description: "Claims filed within 30 days of policy start may indicate adverse selection"
@@ -121,7 +118,6 @@ rules:
     action_on_fail: "INVESTIGATE"
     fail_message: "Incident occurred at {parsed.incident_hour_of_the_day}:00 — elevated fraud risk for late-night claims"
 
-  # ── LOW ───────────────────────────────────────────────────────────────────
   - rule_id: "R009"
     name: "Vehicle Make Matches Policy"
     description: "Vehicle make in claim should match policy"
@@ -183,16 +179,15 @@ rules:
     action_on_fail: "INVESTIGATE"
     fail_message: "Customer has high lifetime claims — see verification warnings"
 
-# ── Severity weights for risk score calculation ──────────────────────────────
 severity_weights:
   CRITICAL: 0.40
   HIGH: 0.30
   MEDIUM: 0.15
   LOW: 0.07
 
-# ── Thresholds for decisions ─────────────────────────────────────────────────
+
 thresholds:
   siu_referral: 0.60        
-  adjuster_referral: 0.30   # Risk score >= this → adjuster review
-  auto_approve: 0.10        # Risk score <= this AND no HIGH/CRITICAL → auto-approve
-  auto_deny: 0.70           # Risk score >= this → auto-deny
+  adjuster_referral: 0.30   
+  auto_approve: 0.10        
+  auto_deny: 0.70        

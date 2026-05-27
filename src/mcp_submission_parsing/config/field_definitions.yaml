@@ -4,12 +4,12 @@ patterns:
   policy_number:
     - '(?:policy\s*(?:number|#|ref|reference)?\s*[:#]?\s*)?(POL-\d{6})'
     - 'POL-\d{6}'
-    - 'Policy\s+(POL[-\s]?\d{6})'                     # "Policy POL-651065"
-    - 'POL[-](\d{6})'                                 # "POL-651065"
+    - 'Policy\s+(POL[-\s]?\d{6})'                    
+    - 'POL[-](\d{6})'                                
     - 'policy[:\s#]+(POL[-]?\d{6})'
 
   customer_id:
-    - 'CUST[-](\d{5,})'                               # "CUST-93810"
+    - 'CUST[-](\d{5,})'                               
     - 'customer[:\s#]+(CUST[-]?\d+)'
 
   customer_name:
@@ -18,29 +18,25 @@ patterns:
 
   # Date / Time
   incident_date:
-    - 'at\s+(\d{4}-\d{2}-\d{2})'                     # "at 2022-08-09"
+    - 'at\s+(\d{4}-\d{2}-\d{2})'                     
     - 'on\s+(\d{4}-\d{2}-\d{2})'
     - '\bon\s+(\d{1,2}/\d{1,2}/\d{4})'
     - '(?:incident|accident|loss|claim)?\s*(?:date)?\s*[:#]?\s*(\d{4}-\d{2}-\d{2})'
     - '(?:incident|accident|loss)\s*(?:date)?\s*[:#]?\s*(\d{1,2}/\d{1,2}/\d{4})'
 
   incident_time:
-    - '(\d{1,2})\s*(?:hours?|hrs?)\s+ago'            # "8 hours ago"
+    - '(\d{1,2})\s*(?:hours?|hrs?)\s+ago'           
     - '(?:at|around)\s+(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))'
 
-  incident_hour_of_the_day:                          # Derived field, but pattern for raw hour
+  incident_hour_of_the_day:                      
     - '(?:time|hour|at)\s*[:#]?\s*(\d{1,2})(?:\s*)?(?:AM|PM|am|pm)?'
 
-  # Incident details
-  
-
-  # incident_type: the pileup pattern was capturing the number as group 1
   incident_type:
     - '\b(Single Vehicle Collision|Multi-vehicle Collision|Parked Car|Vehicle Theft|Other)\b'
     - '(Single\s+Vehicle|Multi-vehicle|Parked\s+Car|Vehicle\s+Theft)'
-    - '\d+[-\s]?(?:car|vehicle)\s+(?:pileup|collision|accident|crash)'  # no capture group → handled by mapping
+    - '\d+[-\s]?(?:car|vehicle)\s+(?:pileup|collision|accident|crash)'  
 
-  # incident_state: require exactly 2 uppercase letters as a standalone token
+
   incident_state:
   - '(?:at|in|near)\s+([A-Z]{2})\s+[A-Z][a-z]'    
   - '\b(A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|P[AR]|RI|S[CD]|T[NX]|UT|V[AT]|W[AVIY])\b'
@@ -70,9 +66,9 @@ patterns:
   city_state:
     - '(?:in|at)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s*[,]\s*([A-Z]{2})'
 
-  # Vehicle information
+
   auto_year:
-    - '(?<!\d)(19[8-9]\d|20[0-1]\d)(?!\d)'           # Avoid matching date years
+    - '(?<!\d)(19[8-9]\d|20[0-1]\d)(?!\d)'     
     - '(?:vehicle|car|auto)\s*(?:year|model\s*year)?\s*[:#]?\s*(\d{4})'
 
   auto_make:
@@ -87,7 +83,6 @@ patterns:
   make_model:
     - '(Toyota|Honda|Ford|Chevrolet|BMW|Nissan|Jeep|Dodge|Hyundai|Kia)\s+([A-Z][a-z]+(?:\s?-?[A-Z]?\d+)?)'
 
-  # Claim metrics
   number_of_vehicles:
     - '(\d+)[-\s]?(?:car|vehicle)s?\s+(?:pileup|collision|accident|crash|involved)'
     - '(\d+)\s+vehicles?\s+involved'
@@ -109,10 +104,10 @@ patterns:
     - '(?:police\s*report)\s*(?:available|filed)?\s*[:#]?\s*(YES|NO|Yes|No|Y|N)'
     - '(?:police\s*report)\s*(filed|available|submitted)'
 
-  property_damage:                                   # YES/NO field
+  property_damage:                                   
     - '(?:property\s*damage)\s*[:#]?\s*(YES|NO|Yes|No|Y|N|\?)'
 
-  property_damage_amount:                            # Dollar amount for property damage
+  property_damage_amount:                            
     - 'property\s+damage\s+(?:estimated|around|about)?\s*\$?\s*([\d,]+)'
 
   total_claim_amount:
@@ -123,7 +118,6 @@ patterns:
   authorities_contacted:
     - '(?:authorities|contacted|called)\s*[:#]?\s*(Police|Fire|Ambulance|None|Other)'
 
-# ── Auto Makes (valid values) ─────────────────────────────────────────────────
 auto_makes:
   - "Toyota"
   - "Honda"
@@ -140,7 +134,7 @@ auto_makes:
   - "Mercedes"
   - "Audi"
 
-# ── Valid Categorical Values ──────────────────────────────────────────────────
+
 valid_values:
   incident_type:
     - "Single Vehicle Collision"
@@ -192,7 +186,6 @@ valid_values:
     - "AZ"
     - "MA"
 
-# ── Synonym Mappings (raw text → canonical value) ─────────────────────────────
 mappings:
   incident_type:
     "single vehicle": "Single Vehicle Collision"
@@ -278,7 +271,7 @@ mappings:
     "broadside": "Side Collision"
     "sideswipe": "Side Collision"
 
-# ── Required vs Optional Fields ───────────────────────────────────────────────
+
 required_fields:
   - policy_number
   - incident_date
