@@ -13,15 +13,10 @@ from pydantic import BaseModel, Field
 from src.lang_graph.workflow import graph
 from src.lang_graph.state import ClaimProcessingState
 
-# ----------------------------------------------------------------------
-# In‑memory store for active/past requests
-# In production, replace with Redis, PostgreSQL, etc.
-# ----------------------------------------------------------------------
+
 store: Dict[str, Dict[str, Any]] = {}
 
-# ----------------------------------------------------------------------
-# Pydantic models for requests/responses
-# ----------------------------------------------------------------------
+
 class ClaimProcessRequest(BaseModel):
     claim_text: str = Field(..., description="Raw claim description")
     customer_name: str = Field(..., description="Full name of the customer")
