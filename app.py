@@ -1,4 +1,3 @@
-# api_server.py
 """
 FastAPI server for the Underwriting Assistant
 """
@@ -26,7 +25,7 @@ from langgraph_underwriting import build_underwriting_graph, run_underwriting_pi
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create FastAPI app
+
 app = FastAPI(
     title="Multi-Agent Underwriting Assistant",
     description="API for processing insurance submissions using MCP servers and LangGraph",
