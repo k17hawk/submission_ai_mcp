@@ -26,22 +26,18 @@ def extract_result(result: Any) -> Any:
     if isinstance(result, dict):
         return result
     
-    # If it's a list, return as-is
     if isinstance(result, list):
         return result
-    
-    # If it's a string, try to parse as JSON
+
     if isinstance(result, str):
         try:
             return json.loads(result)
         except (json.JSONDecodeError, TypeError):
             return result
     
-    # Handle CallToolResult object
     if hasattr(result, 'content'):
         content = result.content
         
-        # If content is a list of TextContent objects
         if isinstance(content, list):
             texts = []
             for item in content:
@@ -54,13 +50,11 @@ def extract_result(result: Any) -> Any:
             
             combined_text = "\n".join(texts)
             
-            # Try to parse as JSON
             try:
                 return json.loads(combined_text)
             except (json.JSONDecodeError, TypeError):
                 return combined_text
         
-        # If content is a string
         if isinstance(content, str):
             try:
                 return json.loads(content)
@@ -69,11 +63,9 @@ def extract_result(result: Any) -> Any:
         
         return content
     
-    # Handle result with .result attribute
     if hasattr(result, 'result'):
         return extract_result(result.result)
-    
-    # Fallback: convert to string
+
     return str(result)
 
 
@@ -105,7 +97,6 @@ class MCPServerClient:
             async with self.session() as session:
                 result = await session.call_tool(tool_name, arguments=kwargs)
                 
-                # Extract the actual content from the result
                 extracted = extract_result(result)
                 
                 logger.info(f"✅ {self.name}/{tool_name} completed successfully")
@@ -130,28 +121,24 @@ class MCPManager:
     """Manages connections to both MCP servers"""
     
     def __init__(self):
-        # Server 1: Insurance Submission Parser
         self.insurance = MCPServerClient(
             host=os.getenv("INSURANCE_SERVER_HOST", "127.0.0.1"),
             port=int(os.getenv("INSURANCE_SERVER_PORT", "8008")),
             name="insurance"
         )
-        
-        # Server 2: Risk Checker
+
         self.risk = MCPServerClient(
             host=os.getenv("RISK_SERVER_HOST", "127.0.0.1"),
             port=int(os.getenv("RISK_SERVER_PORT", "8004")),
             name="risk"
         )
-    
-    # ─── Insurance Server Methods ───
+
     
     async def parse_submission(self, pdf_path: str) -> Dict[str, Any]:
         """Parse ACORD PDF submission"""
         logger.info(f"📄 Parsing submission: {pdf_path}")
         result = await self.insurance.call_tool("parse_acord_submission", pdf_path=pdf_path)
         
-        # Ensure result is a dict
         if isinstance(result, str):
             return {"text": result, "policy_data": {}}
         return result if isinstance(result, dict) else {"text": str(result), "policy_data": {}}
